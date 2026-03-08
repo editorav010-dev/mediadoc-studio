@@ -231,16 +231,6 @@ function DownloadScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-function PlaceholderScreen({ title, onBack }: { title: string; onBack: () => void }) {
-  return (
-    <div className="screen">
-      <button className="back-btn" onClick={onBack}>← Back</button>
-      <h2>{title}</h2>
-      <p style={{ color: "#666" }}>Coming next week.</p>
-    </div>
-  );
-}
-
 function ImageScreen({ onBack }: { onBack: () => void }) {
   const [imageFiles, setImageFiles] = useState<string[]>([]);
   const [outputPath, setOutputPath] = useState("");
