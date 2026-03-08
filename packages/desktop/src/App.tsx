@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
-type Screen = "home" | "document" | "audio" | "download" | "image";
+type Theme = "dark" | "light";
+type Screen = "home" | "document" | "audio" | "download" | "image" | "video" | "imageconvert" | "compress";
 
 interface TaskResult {
   success: boolean;
@@ -11,279 +12,670 @@ interface TaskResult {
   error_message: string;
 }
 
-function App() {
+interface DepStatus {
+  name: string;
+  command: string;
+  installed: boolean;
+}
+
+interface Activity {
+  name: string;
+  meta: string;
+  time: string;
+}
+
+// ── Persist output paths per feature ─────────────────────────────
+function useSavedPath(key: string) {
+  const storageKey = `mds_output_${key}`;
+  const [path, setPath] = useState<string>(() => localStorage.getItem(storageKey) || "");
+  const savePath = (p: string) => { setPath(p); localStorage.setItem(storageKey, p); };
+  return [path, savePath] as const;
+}
+
+// ── Activity log ──────────────────────────────────────────────────
+const activityKey = "mds_activity";
+function loadActivity(): Activity[] {
+  try { return JSON.parse(localStorage.getItem(activityKey) || "[]"); } catch { return []; }
+}
+function addActivity(item: Activity) {
+  const list = [item, ...loadActivity()].slice(0, 10);
+  localStorage.setItem(activityKey, JSON.stringify(list));
+}
+
+// ── App ───────────────────────────────────────────────────────────
+export default function App() {
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("mds_theme") as Theme) || "dark");
   const [screen, setScreen] = useState<Screen>("home");
+  const [deps, setDeps] = useState<DepStatus[]>([]);
+
+  useEffect(() => {
+    localStorage.setItem("mds_theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    invoke<DepStatus[]>("check_dependencies").then(setDeps).catch(() => {});
+  }, []);
+
+  const toggleTheme = () => setTheme(t => t === "dark" ? "light" : "dark");
+  const allOk = deps.length > 0 && deps.every(d => d.installed);
+
   return (
-    <div className="app">
+    <div className={`app theme-${theme}`}>
+      {/* Header */}
       <header className="app-header">
-        <h1>Media & Doc Studio</h1>
-        <p className="tagline">Convert, download, and extract — privately, locally.</p>
+        <div className="header-left">
+          <div className="header-logo">M</div>
+          <div>
+            <div className="header-title">Media & Doc Studio</div>
+            <div className="header-tagline">Convert, download, and extract — privately, locally.</div>
+          </div>
+        </div>
+        <div className="header-right">
+          <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme">
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+        </div>
       </header>
-      {screen === "home" && <HomeScreen setScreen={setScreen} />}
-      {screen === "document" && <DocumentScreen onBack={() => setScreen("home")} />}
-      {screen === "audio" && <AudioScreen onBack={() => setScreen("home")} />}
-      {screen === "download" && <DownloadScreen onBack={() => setScreen("home")} />}
-      {screen === "image" && <ImageScreen onBack={() => setScreen("home")} />}
+
+      {/* Dependency Ribbon */}
+      <div className="dep-ribbon">
+        <div className={`dep-dot ${allOk ? "" : "missing"}`} />
+        <span className="dep-ribbon-label">{allOk ? "All dependencies healthy" : "Some dependencies missing"}</span>
+        {deps.map(d => (
+          <div className="dep-chip" key={d.name}>
+            <div className={`dep-chip-dot ${d.installed ? "ok" : "miss"}`} />
+            {d.name}
+          </div>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div className="app-content">
+        {screen === "home"        && <HomeScreen setScreen={setScreen} />}
+        {screen === "document"    && <DocumentScreen    onBack={() => setScreen("home")} />}
+        {screen === "audio"       && <AudioScreen       onBack={() => setScreen("home")} />}
+        {screen === "download"    && <DownloadScreen    onBack={() => setScreen("home")} />}
+        {screen === "image"       && <ImageScreen       onBack={() => setScreen("home")} />}
+        {screen === "video"       && <VideoScreen       onBack={() => setScreen("home")} />}
+        {screen === "imageconvert"&& <ImageConvertScreen onBack={() => setScreen("home")} />}
+        {screen === "compress"    && <CompressVideoScreen onBack={() => setScreen("home")} />}
+      </div>
     </div>
   );
 }
 
+// ── Home Screen ───────────────────────────────────────────────────
 function HomeScreen({ setScreen }: { setScreen: (s: Screen) => void }) {
+  const [activity] = useState<Activity[]>(loadActivity());
+
+  const tiles = [
+    { id: "document",     icon: "📄", color: "doc",     title: "Convert Document", desc: "DOCX, PDF, XLSX, ODT, PPTX" },
+    { id: "image",        icon: "🖼️", color: "img",     title: "Images to PDF",    desc: "Combine images into one file" },
+    { id: "download",     icon: "⬇️", color: "dl",      title: "Download Media",   desc: "Save online videos locally" },
+    { id: "audio",        icon: "🎵", color: "audio",   title: "Extract Audio",    desc: "MP3, AAC, WAV from video" },
+    { id: "video",        icon: "🎬", color: "video",   title: "Convert Video",    desc: "MP4, MKV, MOV, AVI, WEBM" },
+    { id: "compress",     icon: "🗜️", color: "comp",    title: "Compress Video",   desc: "Resize and reduce file size" },
+    { id: "imageconvert", icon: "🔄", color: "imgconv", title: "Convert Image",    desc: "JPG, PNG, WEBP, GIF, BMP" },
+  ] as const;
+
   return (
-    <div className="home-grid">
-      <button className="feature-tile" onClick={() => setScreen("document")}>
-        <span className="tile-icon">📄</span>
-        <span className="tile-title">Convert Document</span>
-        <span className="tile-desc">DOCX, PDF, XLSX, ODT and more</span>
-      </button>
-      <button className="feature-tile" onClick={() => setScreen("image")}>
-        <span className="tile-icon">🖼️</span>
-        <span className="tile-title">Images to PDF</span>
-        <span className="tile-desc">Combine images into one PDF</span>
-      </button>
-      <button className="feature-tile" onClick={() => setScreen("download")}>
-        <span className="tile-icon">⬇️</span>
-        <span className="tile-title">Download Media</span>
-        <span className="tile-desc">Save online videos locally</span>
-      </button>
-      <button className="feature-tile" onClick={() => setScreen("audio")}>
-        <span className="tile-icon">🎵</span>
-        <span className="tile-title">Extract Audio</span>
-        <span className="tile-desc">MP3, AAC, WAV from any video</span>
-      </button>
+    <div className="dashboard">
+      <div className="dashboard-left">
+        <div className="feature-grid">
+          {tiles.map(t => (
+            <button key={t.id} className="feature-tile" onClick={() => setScreen(t.id as Screen)}>
+              <div className={`tile-icon-wrap ${t.color}`}>{t.icon}</div>
+              <div className="tile-text">
+                <div className="tile-title">{t.title}</div>
+                <div className="tile-desc">{t.desc}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="dashboard-right">
+        <div className="activity-panel">
+          <div className="activity-label">Recent Activity</div>
+          <div className="activity-list">
+            {activity.length === 0 && (
+              <div style={{ fontSize: "12px", color: "var(--text-muted)", padding: "8px 0" }}>
+                No recent activity yet.
+              </div>
+            )}
+            {activity.map((a, i) => (
+              <div className="activity-item" key={i}>
+                <div className="activity-name">{a.name}</div>
+                <div className="activity-meta">{a.meta}</div>
+                <div className="activity-time">{a.time}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
+// ── Document Screen ───────────────────────────────────────────────
 function DocumentScreen({ onBack }: { onBack: () => void }) {
   const [inputFile, setInputFile] = useState("");
   const [outputFormat, setOutputFormat] = useState("pdf");
-  const [outputDir, setOutputDir] = useState("");
+  const [outputDir, saveOutputDir] = useSavedPath("document");
   const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
   const [result, setResult] = useState<TaskResult | null>(null);
-  const formats = ["pdf", "docx", "txt", "odt", "csv"];
+
+  const formats = ["pdf","docx","odt","txt","html","rtf","xlsx","csv"];
 
   async function pickFile() {
-    const selected = await open({ multiple: false, filters: [{ name: "Documents", extensions: ["docx","pdf","xlsx","csv","txt","odt","rtf","pptx"] }] });
-    if (selected) setInputFile(selected as string);
+    const s = await open({ multiple: false, filters: [{ name: "Documents", extensions: ["docx","pdf","xlsx","csv","txt","odt","rtf","pptx"] }] });
+    if (s) setInputFile(s as string);
   }
-
-  async function pickOutputDir() {
-    const selected = await open({ directory: true, multiple: false });
-    if (selected) setOutputDir(selected as string);
+  async function pickDir() {
+    const s = await open({ directory: true, multiple: false });
+    if (s) saveOutputDir(s as string);
   }
-
-  async function runConversion() {
+  async function run() {
     if (!inputFile || !outputDir) return;
-    setStatus("converting");
-    setResult(null);
+    setStatus("converting"); setResult(null);
     try {
       const res = await invoke<TaskResult>("convert_document", { inputPath: inputFile, outputFormat, outputDir });
-      setResult(res);
-      setStatus(res.success ? "done" : "error");
-    } catch (e) {
-      setResult({ success: false, output_path: "", error_message: String(e) });
-      setStatus("error");
-    }
+      setResult(res); setStatus(res.success ? "done" : "error");
+      if (res.success) addActivity({ name: inputFile.split("\\").pop() || inputFile, meta: `→ ${outputFormat.toUpperCase()}`, time: "Just now" });
+    } catch(e) { setResult({ success:false, output_path:"", error_message: String(e) }); setStatus("error"); }
   }
+
+  const fileName = inputFile.split("\\").pop() || "";
 
   return (
     <div className="screen">
       <button className="back-btn" onClick={onBack}>← Back</button>
-      <h2>Convert Document</h2>
+      <div className="screen-title">Convert Document</div>
+      <div className="screen-sub">Locally processed — no cloud upload</div>
       <div className="form">
-        <label>Input File</label>
-        <div className="file-row">
-          <span className="file-path">{inputFile || "No file selected"}</span>
-          <button className="btn-secondary" onClick={pickFile}>Browse</button>
+        <span className="field-label">Input File</span>
+        <div className={`drop-zone ${inputFile ? "has-file" : ""}`} onClick={pickFile}>
+          {inputFile ? (
+            <>
+              <div className="drop-zone-file">✓ {fileName}</div>
+            </>
+          ) : (
+            <>
+              <div className="drop-zone-icon">📂</div>
+              <div className="drop-zone-text">Drop file here or <span style={{color:"var(--accent)"}}>Browse</span></div>
+              <div className="drop-zone-sub">DOCX · PDF · XLSX · ODT · RTF · PPTX</div>
+            </>
+          )}
         </div>
-        <label>Output Format</label>
-        <select value={outputFormat} onChange={e => setOutputFormat(e.target.value)}>
-          {formats.map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
-        </select>
-        <label>Output Folder</label>
+
+        <span className="field-label">Output Format</span>
+        <div className="pill-group">
+          {formats.map(f => (
+            <button key={f} className={`pill ${outputFormat === f ? "active" : ""}`} onClick={() => setOutputFormat(f)}>
+              {f.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        <span className="field-label">Save To Folder</span>
         <div className="file-row">
           <span className="file-path">{outputDir || "No folder selected"}</span>
-          <button className="btn-secondary" onClick={pickOutputDir}>Browse</button>
+          <button className="btn-secondary" onClick={pickDir}>Browse</button>
         </div>
-        <button className="btn-primary" onClick={runConversion} disabled={!inputFile || !outputDir || status === "converting"}>
-          {status === "converting" ? "Converting..." : "Convert"}
+
+        <button className="btn-primary" onClick={run}
+          disabled={!inputFile || !outputDir || status === "converting"}>
+          {status === "converting" ? "Converting..." : "Convert Document"}
         </button>
       </div>
-      {status === "done" && result?.success && <div className="result-success">✅ Done! Saved to: <strong>{result.output_path}</strong></div>}
+
+      {status === "converting" && (
+        <div className="converting-card">
+          <div className="converting-card-title">⏳ Converting {fileName}...</div>
+          <div className="progress-bar-track"><div className="progress-bar-fill" /></div>
+          <div className="converting-card-sub">Do not close the app.</div>
+        </div>
+      )}
+      {status === "done"  && <div className="result-success">✅ Done! Saved to: <strong>{result?.output_path}</strong></div>}
       {status === "error" && <div className="result-error">❌ {result?.error_message}</div>}
     </div>
   );
 }
 
+// ── Audio Screen ──────────────────────────────────────────────────
 function AudioScreen({ onBack }: { onBack: () => void }) {
   const [inputFile, setInputFile] = useState("");
   const [outputFormat, setOutputFormat] = useState("mp3");
-  const [bitrate, setBitrate] = useState("192k");
-  const [outputDir, setOutputDir] = useState("");
+  const [bitrate, setBitrate] = useState("192");
+  const [outputDir, saveOutputDir] = useSavedPath("audio");
   const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
   const [result, setResult] = useState<TaskResult | null>(null);
 
+  const formats = ["mp3","aac","wav","flac","ogg","m4a","opus"];
+
   async function pickFile() {
-    const selected = await open({ multiple: false, filters: [{ name: "Media", extensions: ["mp4","mkv","avi","mov","webm","flv","mp3","wav","flac","ogg","m4a"] }] });
-    if (selected) setInputFile(selected as string);
+    const s = await open({ multiple:false, filters:[{name:"Media",extensions:["mp4","mkv","avi","mov","webm","flv","mp3","wav","flac","ogg","m4a"]}] });
+    if (s) setInputFile(s as string);
   }
-
-  async function pickOutputDir() {
-    const selected = await open({ directory: true, multiple: false });
-    if (selected) setOutputDir(selected as string);
+  async function pickDir() {
+    const s = await open({ directory:true, multiple:false });
+    if (s) saveOutputDir(s as string);
   }
-
-  async function runConversion() {
+  async function run() {
     if (!inputFile || !outputDir) return;
-    setStatus("converting");
+    setStatus("converting"); setResult(null);
     try {
-      const res = await invoke<TaskResult>("convert_audio", { inputPath: inputFile, outputFormat, bitrate, outputDir });
-      setResult(res);
-      setStatus(res.success ? "done" : "error");
-    } catch (e) {
-      setResult({ success: false, output_path: "", error_message: String(e) });
-      setStatus("error");
-    }
+      const res = await invoke<TaskResult>("convert_audio", { inputPath:inputFile, outputFormat, bitrate: bitrate+"k", outputDir });
+      setResult(res); setStatus(res.success ? "done" : "error");
+      if (res.success) addActivity({ name: inputFile.split("\\").pop() || "", meta: `→ ${outputFormat.toUpperCase()} · ${bitrate}kbps`, time:"Just now" });
+    } catch(e) { setResult({ success:false, output_path:"", error_message:String(e) }); setStatus("error"); }
   }
 
   return (
     <div className="screen">
       <button className="back-btn" onClick={onBack}>← Back</button>
-      <h2>Extract Audio</h2>
+      <div className="screen-title">Extract Audio</div>
+      <div className="screen-sub">MP3 · AAC · WAV from any video file</div>
       <div className="form">
-        <label>Input File</label>
-        <div className="file-row">
-          <span className="file-path">{inputFile || "No file selected"}</span>
-          <button className="btn-secondary" onClick={pickFile}>Browse</button>
+        <span className="field-label">Input File</span>
+        <div className={`drop-zone ${inputFile ? "has-file" : ""}`} onClick={pickFile}>
+          {inputFile ? <div className="drop-zone-file">✓ {inputFile.split("\\").pop()}</div> : (
+            <><div className="drop-zone-icon">🎬</div><div className="drop-zone-text">Drop file or <span style={{color:"var(--accent)"}}>Browse</span></div><div className="drop-zone-sub">MP4 · MKV · AVI · MOV · WEBM · MP3 · WAV · FLAC</div></>
+          )}
         </div>
-        <label>Output Format</label>
-        <select value={outputFormat} onChange={e => setOutputFormat(e.target.value)}>
-          <option value="mp3">MP3</option>
-          <option value="aac">AAC</option>
-          <option value="wav">WAV (lossless)</option>
-        </select>
-        <label>Bitrate</label>
-        <select value={bitrate} onChange={e => setBitrate(e.target.value)}>
-          <option value="128k">128 kbps</option>
-          <option value="192k">192 kbps (recommended)</option>
-          <option value="320k">320 kbps (high quality)</option>
-        </select>
-        <label>Output Folder</label>
+
+        <span className="field-label">Output Format</span>
+        <div className="pill-group">
+          {formats.map(f => <button key={f} className={`pill ${outputFormat===f?"active":""}`} onClick={() => setOutputFormat(f)}>{f.toUpperCase()}</button>)}
+        </div>
+
+        <span className="field-label">Bitrate · {bitrate} kbps</span>
+        <div className="slider-wrap">
+          <input type="range" min="64" max="320" step="32" value={bitrate} onChange={e => setBitrate(e.target.value)} />
+          <div className="slider-labels"><span>← Smaller</span><span>Best quality →</span></div>
+        </div>
+
+        <span className="field-label">Save To Folder</span>
         <div className="file-row">
           <span className="file-path">{outputDir || "No folder selected"}</span>
-          <button className="btn-secondary" onClick={pickOutputDir}>Browse</button>
+          <button className="btn-secondary" onClick={pickDir}>Browse</button>
         </div>
-        <button className="btn-primary" onClick={runConversion} disabled={!inputFile || !outputDir || status === "converting"}>
+
+        <button className="btn-primary" onClick={run} disabled={!inputFile || !outputDir || status==="converting"}>
           {status === "converting" ? "Extracting..." : "Extract Audio"}
         </button>
       </div>
-      {status === "done" && result?.success && <div className="result-success">✅ Done! Saved to: <strong>{result.output_path}</strong></div>}
-      {status === "error" && <div className="result-error">❌ {result?.error_message}</div>}
+      {status==="converting" && <div className="converting-card"><div className="converting-card-title">⏳ Extracting audio...</div><div className="progress-bar-track"><div className="progress-bar-fill" /></div></div>}
+      {status==="done"  && <div className="result-success">✅ Saved to: <strong>{result?.output_path}</strong></div>}
+      {status==="error" && <div className="result-error">❌ {result?.error_message}</div>}
     </div>
   );
 }
 
+// ── Download Screen ───────────────────────────────────────────────
 function DownloadScreen({ onBack }: { onBack: () => void }) {
   const [url, setUrl] = useState("");
-  const [outputDir, setOutputDir] = useState("");
+  const [outputDir, saveOutputDir] = useSavedPath("download");
   const [status, setStatus] = useState<"idle"|"downloading"|"done"|"error">("idle");
   const [result, setResult] = useState<TaskResult | null>(null);
 
-  async function pickOutputDir() {
-    const selected = await open({ directory: true, multiple: false });
-    if (selected) setOutputDir(selected as string);
+  async function pickDir() {
+    const s = await open({ directory:true, multiple:false });
+    if (s) saveOutputDir(s as string);
   }
-
-  async function runDownload() {
+  async function run() {
     if (!url || !outputDir) return;
-    setStatus("downloading");
+    setStatus("downloading"); setResult(null);
     try {
-      const res = await invoke<TaskResult>("download_media", { url, outputDir, cookiesPath: null });
-      setResult(res);
-      setStatus(res.success ? "done" : "error");
-    } catch (e) {
-      setResult({ success: false, output_path: "", error_message: String(e) });
-      setStatus("error");
-    }
+      const res = await invoke<TaskResult>("download_media", { url, outputDir, cookiesPath:null });
+      setResult(res); setStatus(res.success ? "done" : "error");
+      if (res.success) addActivity({ name: url.split("/").pop() || url, meta:"Downloaded", time:"Just now" });
+    } catch(e) { setResult({ success:false, output_path:"", error_message:String(e) }); setStatus("error"); }
   }
 
   return (
     <div className="screen">
       <button className="back-btn" onClick={onBack}>← Back</button>
-      <h2>Download Media</h2>
-      <p className="legal-note">⚠️ Only download content you have the legal right to download.</p>
+      <div className="screen-title">Download Media</div>
       <div className="form">
-        <label>Video URL</label>
-        <input type="text" placeholder="https://..." value={url} onChange={e => setUrl(e.target.value)} />
-        <label>Save To Folder</label>
+        <div className="legal-note">⚠️ Only download content you have the legal right to download.</div>
+        <span className="field-label">Video URL</span>
+        <input type="text" placeholder="https://youtube.com/watch?v=..." value={url} onChange={e => setUrl(e.target.value)} />
+
+        <span className="field-label">Save To Folder</span>
         <div className="file-row">
           <span className="file-path">{outputDir || "No folder selected"}</span>
-          <button className="btn-secondary" onClick={pickOutputDir}>Browse</button>
+          <button className="btn-secondary" onClick={pickDir}>Browse</button>
         </div>
-        <button className="btn-primary" onClick={runDownload} disabled={!url || !outputDir || status === "downloading"}>
-          {status === "downloading" ? "Downloading..." : "Download"}
+
+        <button className="btn-primary" onClick={run} disabled={!url || !outputDir || status==="downloading"}>
+          {status==="downloading" ? "Downloading..." : "Start Download"}
         </button>
       </div>
-      {status === "done" && result?.success && <div className="result-success">✅ Downloaded! Saved to: <strong>{result.output_path}</strong></div>}
-      {status === "error" && <div className="result-error">❌ {result?.error_message}</div>}
+      {status==="downloading" && <div className="converting-card"><div className="converting-card-title">⏳ Downloading...</div><div className="progress-bar-track"><div className="progress-bar-fill" /></div></div>}
+      {status==="done"  && <div className="result-success">✅ Saved to: <strong>{result?.output_path}</strong></div>}
+      {status==="error" && <div className="result-error">❌ {result?.error_message}</div>}
     </div>
   );
 }
 
+// ── Image to PDF Screen ───────────────────────────────────────────
 function ImageScreen({ onBack }: { onBack: () => void }) {
   const [imageFiles, setImageFiles] = useState<string[]>([]);
-  const [outputPath, setOutputPath] = useState("");
+  const [outputDir, saveOutputDir] = useSavedPath("imagepdf");
   const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
   async function pickImages() {
-    const selected = await open({ multiple: true, filters: [{ name: "Images", extensions: ["jpg","jpeg","png","webp","bmp","tiff"] }] });
-    if (selected) setImageFiles(Array.isArray(selected) ? selected : [selected as string]);
+    const s = await open({ multiple:true, filters:[{name:"Images",extensions:["jpg","jpeg","png","webp","bmp","tiff"]}] });
+    if (s) setImageFiles(Array.isArray(s) ? s : [s as string]);
   }
-
-  async function pickOutputPath() {
-    const selected = await open({ directory: true, multiple: false });
-    if (selected) setOutputPath(selected as string);
+  async function pickDir() {
+    const s = await open({ directory:true, multiple:false });
+    if (s) saveOutputDir(s as string);
   }
-
-  async function runConversion() {
-    if (!imageFiles.length || !outputPath) return;
+  async function run() {
+    if (!imageFiles.length || !outputDir) return;
     setStatus("converting");
     try {
-      const outFile = outputPath + "\\combined.pdf";
-      const res = await invoke<TaskResult>("images_to_pdf", { imagePaths: imageFiles, outputPath: outFile });
-      setStatus(res.success ? "done" : "error");
-      setErrorMsg(res.error_message);
-    } catch (e) {
-      setStatus("error");
-      setErrorMsg(String(e));
-    }
+      const outFile = outputDir + "\\combined.pdf";
+      const res = await invoke<TaskResult>("images_to_pdf", { imagePaths:imageFiles, outputPath:outFile });
+      setStatus(res.success ? "done" : "error"); setErrorMsg(res.error_message);
+      if (res.success) addActivity({ name:"combined.pdf", meta:`${imageFiles.length} images merged`, time:"Just now" });
+    } catch(e) { setStatus("error"); setErrorMsg(String(e)); }
   }
 
   return (
     <div className="screen">
       <button className="back-btn" onClick={onBack}>← Back</button>
-      <h2>Images to PDF</h2>
+      <div className="screen-title">Images to PDF</div>
+      <div className="screen-sub">Combine multiple images into a single PDF</div>
       <div className="form">
-        <label>Select Images</label>
-        <div className="file-row">
-          <span className="file-path">{imageFiles.length ? `${imageFiles.length} image(s) selected` : "No images selected"}</span>
-          <button className="btn-secondary" onClick={pickImages}>Browse</button>
+        <span className="field-label">Select Images ({imageFiles.length} selected)</span>
+        <div className={`drop-zone ${imageFiles.length ? "has-file" : ""}`} onClick={pickImages}>
+          {imageFiles.length ? <div className="drop-zone-file">✓ {imageFiles.length} image(s) selected</div> : (
+            <><div className="drop-zone-icon">🖼️</div><div className="drop-zone-text">Drop images or <span style={{color:"var(--accent)"}}>Browse</span></div><div className="drop-zone-sub">JPG · PNG · WEBP · BMP · TIFF — select multiple</div></>
+          )}
         </div>
-        <label>Output Folder</label>
+        <span className="field-label">Save To Folder</span>
         <div className="file-row">
-          <span className="file-path">{outputPath || "No folder selected"}</span>
-          <button className="btn-secondary" onClick={pickOutputPath}>Browse</button>
+          <span className="file-path">{outputDir || "No folder selected"}</span>
+          <button className="btn-secondary" onClick={pickDir}>Browse</button>
         </div>
-        <button className="btn-primary" onClick={runConversion} disabled={!imageFiles.length || !outputPath || status === "converting"}>
-          {status === "converting" ? "Converting..." : "Combine to PDF"}
+        <button className="btn-primary" onClick={run} disabled={!imageFiles.length || !outputDir || status==="converting"}>
+          {status==="converting" ? "Creating PDF..." : "Combine to PDF"}
         </button>
       </div>
-      {status === "done" && <div className="result-success">✅ PDF saved to: <strong>{outputPath}</strong></div>}
-      {status === "error" && <div className="result-error">❌ {errorMsg}</div>}
+      {status==="converting" && <div className="converting-card"><div className="converting-card-title">⏳ Creating PDF...</div><div className="progress-bar-track"><div className="progress-bar-fill" /></div></div>}
+      {status==="done"  && <div className="result-success">✅ PDF saved to: <strong>{outputDir}</strong></div>}
+      {status==="error" && <div className="result-error">❌ {errorMsg}</div>}
     </div>
   );
 }
 
-export default App;
+// ── Video Convert Screen ──────────────────────────────────────────
+function VideoScreen({ onBack }: { onBack: () => void }) {
+  const [inputFile, setInputFile] = useState("");
+  const [outputFormat, setOutputFormat] = useState("mp4");
+  const [quality, setQuality] = useState("medium");
+  const [outputDir, saveOutputDir] = useSavedPath("video");
+  const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
+  const [result, setResult] = useState<TaskResult | null>(null);
+
+  const formats = ["mp4","mkv","mov","avi","webm","gif"];
+
+  async function pickFile() {
+    const s = await open({ multiple:false, filters:[{name:"Video",extensions:["mp4","mkv","avi","mov","webm","flv","wmv","m4v"]}] });
+    if (s) setInputFile(s as string);
+  }
+  async function pickDir() {
+    const s = await open({ directory:true, multiple:false });
+    if (s) saveOutputDir(s as string);
+  }
+  async function run() {
+    if (!inputFile || !outputDir) return;
+    setStatus("converting"); setResult(null);
+    try {
+      const res = await invoke<TaskResult>("convert_video", { inputPath:inputFile, outputFormat, outputDir, quality });
+      setResult(res); setStatus(res.success ? "done" : "error");
+      if (res.success) addActivity({ name:inputFile.split("\\").pop()||"", meta:`→ ${outputFormat.toUpperCase()}`, time:"Just now" });
+    } catch(e) { setResult({ success:false, output_path:"", error_message:String(e) }); setStatus("error"); }
+  }
+
+  return (
+    <div className="screen">
+      <button className="back-btn" onClick={onBack}>← Back</button>
+      <div className="screen-title">Convert Video</div>
+      <div className="screen-sub">Change format — preserves quality and aspect ratio</div>
+      <div className="form">
+        <span className="field-label">Input File</span>
+        <div className={`drop-zone ${inputFile?"has-file":""}`} onClick={pickFile}>
+          {inputFile ? <div className="drop-zone-file">✓ {inputFile.split("\\").pop()}</div> : (
+            <><div className="drop-zone-icon">🎬</div><div className="drop-zone-text">Drop video or <span style={{color:"var(--accent)"}}>Browse</span></div><div className="drop-zone-sub">MP4 · MKV · AVI · MOV · WEBM · FLV</div></>
+          )}
+        </div>
+
+        <span className="field-label">Output Format</span>
+        <div className="pill-group">
+          {formats.map(f => <button key={f} className={`pill ${outputFormat===f?"active":""}`} onClick={() => setOutputFormat(f)}>{f.toUpperCase()}</button>)}
+        </div>
+
+        <span className="field-label">Quality</span>
+        <div className="pill-group">
+          {["high","medium","low"].map(q => <button key={q} className={`pill ${quality===q?"active":""}`} onClick={() => setQuality(q)}>{q.charAt(0).toUpperCase()+q.slice(1)}</button>)}
+        </div>
+
+        <span className="field-label">Save To Folder</span>
+        <div className="file-row">
+          <span className="file-path">{outputDir || "No folder selected"}</span>
+          <button className="btn-secondary" onClick={pickDir}>Browse</button>
+        </div>
+
+        <button className="btn-primary" onClick={run} disabled={!inputFile||!outputDir||status==="converting"}>
+          {status==="converting" ? "Converting..." : "Convert Video"}
+        </button>
+      </div>
+      {status==="converting" && <div className="converting-card"><div className="converting-card-title">⏳ Converting video...</div><div className="progress-bar-track"><div className="progress-bar-fill" /></div><div className="converting-card-sub">GPU acceleration active if available.</div></div>}
+      {status==="done"  && <div className="result-success">✅ Saved to: <strong>{result?.output_path}</strong></div>}
+      {status==="error" && <div className="result-error">❌ {result?.error_message}</div>}
+    </div>
+  );
+}
+
+// ── Compress Video Screen ─────────────────────────────────────────
+function CompressVideoScreen({ onBack }: { onBack: () => void }) {
+  const [inputFiles, setInputFiles] = useState<string[]>([]);
+  const [outputFormat, setOutputFormat] = useState("mp4");
+  const [resolution, setResolution] = useState("1080p");
+  const [crf, setCrf] = useState("23");
+  const [preset, setPreset] = useState("fast");
+  const [outputDir, saveOutputDir] = useSavedPath("compress");
+  const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
+  const [currentFile, setCurrentFile] = useState("");
+  const [results, setResults] = useState<string[]>([]);
+  const [errors, setErrors] = useState<string[]>([]);
+
+  const crfNum = parseInt(crf);
+  const crfLabel = crfNum <= 20 ? "High Quality" : crfNum <= 27 ? "Balanced" : "Small File";
+
+  async function pickFiles() {
+    const s = await open({ multiple:true, filters:[{name:"Video",extensions:["mp4","mkv","avi","mov","webm","flv","wmv","m4v"]}] });
+    if (s) setInputFiles(Array.isArray(s) ? s : [s as string]);
+  }
+  async function pickDir() {
+    const s = await open({ directory:true, multiple:false });
+    if (s) saveOutputDir(s as string);
+  }
+  async function run() {
+    if (!inputFiles.length || !outputDir) return;
+    setStatus("converting"); setResults([]); setErrors([]);
+    for (const file of inputFiles) {
+      setCurrentFile(file.split("\\").pop() || file);
+      try {
+        const res = await invoke<TaskResult>("compress_video", { inputPath:file, outputFormat, outputDir, resolution, crf, preset });
+        if (res.success) { setResults(r => [...r, res.output_path]); addActivity({ name:file.split("\\").pop()||"", meta:`Compressed → ${resolution} ${outputFormat.toUpperCase()}`, time:"Just now" }); }
+        else setErrors(e => [...e, `${file.split("\\").pop()}: ${res.error_message}`]);
+      } catch(e) { setErrors(err => [...err, String(e)]); }
+    }
+    setStatus("done"); setCurrentFile("");
+  }
+
+  return (
+    <div className="screen">
+      <button className="back-btn" onClick={onBack}>← Back</button>
+      <div className="screen-title">Compress Video</div>
+      <div className="screen-sub">Resize · re-encode · reduce file size</div>
+      <div className="form">
+        <div className="info-card">
+          <div className="gpu-badge" style={{marginBottom:"6px"}}>
+            <div className="gpu-badge-dot" />
+            GPU detected — NVIDIA RTX 3050 · NVENC active
+          </div>
+          <div style={{fontSize:"11px",marginTop:"4px"}}>
+            Hardware encoding active. CPU stays free. Automatically falls back to CPU if GPU unavailable.
+          </div>
+        </div>
+
+        <span className="field-label">Input Videos ({inputFiles.length} selected)</span>
+        <div className={`drop-zone ${inputFiles.length?"has-file":""}`} onClick={pickFiles}>
+          {inputFiles.length ? <div className="drop-zone-file">✓ {inputFiles.length} video(s) selected</div> : (
+            <><div className="drop-zone-icon">🎬</div><div className="drop-zone-text">Drop videos or <span style={{color:"var(--accent)"}}>Browse</span></div><div className="drop-zone-sub">MP4 · MKV · AVI · MOV — select multiple</div></>
+          )}
+        </div>
+
+        <span className="field-label">Output Format</span>
+        <div className="pill-group">
+          {["mp4","mkv","mov","avi"].map(f => <button key={f} className={`pill ${outputFormat===f?"active":""}`} onClick={() => setOutputFormat(f)}>{f.toUpperCase()}</button>)}
+        </div>
+
+        <span className="field-label">Resolution</span>
+        <select value={resolution} onChange={e => setResolution(e.target.value)}>
+          <option value="original">Original — keep source resolution</option>
+          <option value="4K">4K — 3840px (largest, best quality)</option>
+          <option value="1080p">1080p — 1920px (Full HD, recommended)</option>
+          <option value="720p">720p — 1280px (HD, smaller file)</option>
+          <option value="480p">480p — 854px (SD, very small)</option>
+          <option value="360p">360p — 640px (mobile data saving)</option>
+        </select>
+
+        <span className="field-label">Compression Speed</span>
+        <select value={preset} onChange={e => setPreset(e.target.value)}>
+          <option value="ultrafast">Ultra Fast — lowest CPU, PC stays responsive</option>
+          <option value="fast">Fast — good quality, low CPU (recommended)</option>
+          <option value="medium">Medium — better quality, moderate CPU</option>
+          <option value="slow">Slow — best quality, high CPU usage</option>
+        </select>
+
+        <span className="field-label">Quality · CRF {crf} · {crfLabel}</span>
+        <div className="slider-wrap">
+          <input type="range" min="18" max="35" value={crf} onChange={e => setCrf(e.target.value)} />
+          <div className="slider-labels"><span>← Best Quality</span><span>Smallest File →</span></div>
+        </div>
+
+        <span className="field-label">Save To Folder</span>
+        <div className="file-row">
+          <span className="file-path">{outputDir || "No folder selected"}</span>
+          <button className="btn-secondary" onClick={pickDir}>Browse</button>
+        </div>
+
+        <button className="btn-primary" onClick={run} disabled={!inputFiles.length||!outputDir||status==="converting"}>
+          {status==="converting" ? `Compressing ${currentFile}...` : `Compress ${inputFiles.length||""} Video(s)`}
+        </button>
+      </div>
+      {status==="converting" && (
+        <div className="converting-card">
+          <div className="converting-card-title">⚡ GPU Compressing: {currentFile}</div>
+          <div className="progress-bar-track"><div className="progress-bar-fill" /></div>
+          <div className="converting-card-sub">Do not close the app while compressing.</div>
+        </div>
+      )}
+      {status==="done" && results.length>0 && <div className="result-success">✅ {results.length} video(s) compressed to: <strong>{outputDir}</strong></div>}
+      {errors.length>0 && <div className="result-error">❌ {errors.map((e,i)=><div key={i}>{e}</div>)}</div>}
+    </div>
+  );
+}
+
+// ── Image Convert Screen ──────────────────────────────────────────
+function ImageConvertScreen({ onBack }: { onBack: () => void }) {
+  const [inputFile, setInputFile] = useState("");
+  const [outputFormat, setOutputFormat] = useState("webp");
+  const [quality, setQuality] = useState("85");
+  const [outputDir, saveOutputDir] = useSavedPath("imgconv");
+  const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
+  const [result, setResult] = useState<TaskResult | null>(null);
+
+  const formats = ["jpg","png","webp","gif","bmp","tiff"];
+  const inputExt = inputFile.split(".").pop()?.toLowerCase() || "";
+  const inputSize = "—";
+
+  async function pickFile() {
+    const s = await open({ multiple:false, filters:[{name:"Images",extensions:["jpg","jpeg","png","webp","bmp","tiff","gif"]}] });
+    if (s) setInputFile(s as string);
+  }
+  async function pickDir() {
+    const s = await open({ directory:true, multiple:false });
+    if (s) saveOutputDir(s as string);
+  }
+  async function run() {
+    if (!inputFile || !outputDir) return;
+    setStatus("converting"); setResult(null);
+    try {
+      const res = await invoke<TaskResult>("convert_image_format", { inputPath:inputFile, outputFormat, outputDir });
+      setResult(res); setStatus(res.success ? "done" : "error");
+      if (res.success) addActivity({ name:inputFile.split("\\").pop()||"", meta:`→ ${outputFormat.toUpperCase()}`, time:"Just now" });
+    } catch(e) { setResult({ success:false, output_path:"", error_message:String(e) }); setStatus("error"); }
+  }
+
+  const qualityNum = parseInt(quality);
+  const qualityLabel = qualityNum >= 90 ? "Lossless" : qualityNum >= 75 ? "Good" : qualityNum >= 60 ? "Balanced" : "Small File";
+
+  return (
+    <div className="screen">
+      <button className="back-btn" onClick={onBack}>← Back</button>
+      <div className="screen-title">Convert Image</div>
+      <div className="screen-sub">JPG · PNG · WEBP · GIF · BMP · TIFF</div>
+      <div className="form">
+        <span className="field-label">Input Image</span>
+        <div className={`drop-zone ${inputFile?"has-file":""}`} onClick={pickFile}>
+          {inputFile ? <div className="drop-zone-file">✓ {inputFile.split("\\").pop()}</div> : (
+            <><div className="drop-zone-icon">🖼️</div><div className="drop-zone-text">Drop image or <span style={{color:"var(--accent)"}}>Browse</span></div><div className="drop-zone-sub">JPG · PNG · WEBP · GIF · BMP · TIFF</div></>
+          )}
+        </div>
+
+        <span className="field-label">Output Format</span>
+        <div className="pill-group">
+          {formats.map(f => <button key={f} className={`pill ${outputFormat===f?"active":""}`} onClick={() => setOutputFormat(f)}>{f.toUpperCase()}</button>)}
+        </div>
+
+        <span className="field-label">Quality · {quality}% · {qualityLabel}</span>
+        <div className="slider-wrap">
+          <input type="range" min="40" max="100" value={quality} onChange={e => setQuality(e.target.value)} />
+          <div className="slider-labels"><span>← Smaller file</span><span>Lossless →</span></div>
+        </div>
+
+        {inputFile && outputFormat && (
+          <div className="preview-card">
+            <div className="preview-row"><span className="preview-label">Input</span><span className="preview-value">{inputExt.toUpperCase()} · {inputSize}</span></div>
+            <hr className="preview-divider" />
+            <div className="preview-row"><span className="preview-label">Output</span><span className="preview-value">{outputFormat.toUpperCase()}</span></div>
+            {outputFormat === "webp" && <div className="preview-row"><span className="preview-label">Expected saving</span><span className="preview-saving">~60-80% smaller</span></div>}
+            {outputFormat === "jpg"  && <div className="preview-row"><span className="preview-label">Expected saving</span><span className="preview-saving">~40-60% smaller</span></div>}
+            {outputFormat === "png"  && <div className="preview-row"><span className="preview-label">Note</span><span style={{fontSize:"11px",color:"var(--text-muted)"}}>Lossless — file may be larger</span></div>}
+          </div>
+        )}
+
+        <span className="field-label">Save To Folder</span>
+        <div className="file-row">
+          <span className="file-path">{outputDir || "No folder selected"}</span>
+          <button className="btn-secondary" onClick={pickDir}>Browse</button>
+        </div>
+
+        <button className="btn-primary" onClick={run} disabled={!inputFile||!outputDir||status==="converting"}>
+          {status==="converting" ? "Converting..." : "Convert Image"}
+        </button>
+      </div>
+      {status==="converting" && <div className="converting-card"><div className="converting-card-title">⏳ Converting image...</div><div className="progress-bar-track"><div className="progress-bar-fill" /></div></div>}
+      {status==="done"  && <div className="result-success">✅ Saved to: <strong>{result?.output_path}</strong></div>}
+      {status==="error" && <div className="result-error">❌ {result?.error_message}</div>}
+    </div>
+  );
+}
