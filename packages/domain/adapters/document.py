@@ -22,12 +22,13 @@ def find_soffice() -> Path:
             return path
     raise RuntimeError("LibreOffice (`soffice`) executable not found.")
 
-def convert_document(input_path: str | Path, output_format: str, output_dir: str | Path) -> Tuple[bool, str, str]:
+def convert_document(input_path: str | Path, output_format: str, output_dir: str | Path | None = None) -> Tuple[bool, str, str]:
     input_path = Path(input_path)
-    output_dir = Path(output_dir)
     try:
         if not input_path.exists():
             return False, "", f"Input not found: {input_path}"
+
+        output_dir = Path(output_dir) if output_dir else input_path.parent
         
         soffice_path = find_soffice()
         output_dir.mkdir(parents=True, exist_ok=True)

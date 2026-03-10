@@ -3,9 +3,8 @@ import shutil
 from pathlib import Path
 from typing import Tuple
 
-def convert_to_audio(input_path: str | Path, output_format: str, bitrate: str, output_dir: str | Path) -> Tuple[bool, str, str]:
+def convert_to_audio(input_path: str | Path, output_format: str, bitrate: str, output_dir: str | Path | None = None) -> Tuple[bool, str, str]:
     input_path = Path(input_path)
-    output_dir = Path(output_dir)
     
     try:
         ffmpeg_path = shutil.which("ffmpeg")
@@ -14,7 +13,8 @@ def convert_to_audio(input_path: str | Path, output_format: str, bitrate: str, o
             
         if not input_path.exists():
             return False, "", f"Input not found: {input_path}"
-            
+
+        output_dir = Path(output_dir) if output_dir else input_path.parent
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{input_path.stem}.{output_format}"
         
@@ -29,7 +29,7 @@ def convert_to_audio(input_path: str | Path, output_format: str, bitrate: str, o
             "warning",
         ]
         
-        if output_format.lower() == "mp3" and bitrate:
+        if output_format.lower() in ("mp3", "aac") and bitrate:
             args += ["-ab", bitrate]
             
         args.append(str(output_path))

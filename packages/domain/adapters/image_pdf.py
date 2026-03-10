@@ -14,7 +14,7 @@ def images_to_pdf(image_paths: List[str | Path], output_path: str | Path) -> Tup
             if not img_path.exists():
                 return False, "", f"Image not found: {img_path}"
             with Image.open(img_path) as img:
-                rgb_frames.append(img.convert("RGB"))
+                rgb_frames.append(img.convert("RGB").copy())
                 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
