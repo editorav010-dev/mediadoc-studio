@@ -112,8 +112,15 @@ def convert_audio(input_file, output_format, bitrate, output_dir):
       python -m packages.domain.cli convert audio podcast.wav --to aac --bitrate 128k
     """
     from packages.domain.adapters.audio import convert_to_audio
+    from packages.domain.utils.validators import is_audio_conversion_supported
 
     input_path = Path(input_file)
+    input_fmt = input_path.suffix.lstrip(".").lower()
+
+    if not is_audio_conversion_supported(input_fmt, output_format):
+        console.print(f"[red]✗ Converting {input_fmt.upper()} → {output_format.upper()} is not supported.[/red]")
+        console.print("[yellow]💡 Supported inputs: MP4, MKV, AVI, MOV, WEBM, FLV, MP3, WAV, FLAC, OGG, M4A[/yellow]")
+        raise SystemExit(1)
 
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
                   transient=True) as progress:

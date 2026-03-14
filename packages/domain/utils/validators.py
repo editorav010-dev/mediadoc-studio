@@ -4,6 +4,7 @@ SUPPORTED_DOC_CONVERSIONS = {
     "xlsx": ["csv"],
     "csv":  ["xlsx"],
     "odt":  ["docx", "pdf"],
+    "txt":  ["docx", "pdf"],
     "rtf":  ["docx", "pdf"],
     "pptx": ["pdf"],
 }

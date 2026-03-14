@@ -6,9 +6,9 @@ def resolve_output_path(input_path: str, output_format: str, output_dir: str = N
     Given an input file, generate a clean output file path.
     Example: input=notes.docx, format=pdf → notes_converted.pdf
     """
-    input = Path(input_path)
-    directory = Path(output_dir) if output_dir else input.parent
-    output_name = f"{input.stem}_converted.{output_format}"
+    input_file = Path(input_path)
+    directory = Path(output_dir) if output_dir else input_file.parent
+    output_name = f"{input_file.stem}_converted.{output_format}"
     return str(directory / output_name)
 
 def handle_naming_collision(output_path: str) -> str:
