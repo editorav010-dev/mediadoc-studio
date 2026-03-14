@@ -80,7 +80,7 @@ export default function App() {
       {/* Dependency Ribbon */}
       <div className="dep-ribbon">
         <div className={`dep-dot ${allOk ? "" : "missing"}`} />
-        <span className="dep-ribbon-label">{allOk ? "All dependencies healthy" : "Some dependencies missing"}</span>
+        <span className="dep-ribbon-label">{allOk ? "All dependencies healthy" : "Some dependencies missing (or running in web mode)"}</span>
         {deps.map(d => (
           <div className="dep-chip" key={d.name}>
             <div className={`dep-chip-dot ${d.installed ? "ok" : "miss"}`} />

@@ -55,7 +55,7 @@ async fn convert_document(input_path: String, output_format: String, output_dir:
     let output_dir_clone = output_dir.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("C:\\Program Files\\LibreOffice\\program\\soffice.exe")
+        Command::new("soffice")
             .args(["--headless", "--convert-to", &convert_arg_owned, "--outdir", &output_dir_clone, &input_path_clone])
             .output()
     }).await.unwrap();
@@ -107,7 +107,7 @@ async fn convert_audio(input_path: String, output_format: String, bitrate: Strin
     args.push(output_file.clone());
     
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe").args(&args).output()
+        Command::new("ffmpeg").args(&args).output()
     }).await.unwrap();
     
     match result {
@@ -148,10 +148,10 @@ async fn convert_video(
     if output_format == "gif" {
         return tokio::task::spawn_blocking(move || {
             let palette_file = format!("{}\\palette.png", output_dir_clone);
-            Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+            Command::new("ffmpeg")
                 .args(["-i", &input_path_clone, "-vf", "fps=15,scale=480:-1:flags=lanczos,palettegen", "-y", &palette_file])
                 .output().ok();
-            let result = Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+            let result = Command::new("ffmpeg")
                 .args(["-i", &input_path_clone, "-i", &palette_file, "-lavfi", "fps=15,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse", "-y", &output_file_clone])
                 .output();
             let _ = std::fs::remove_file(&palette_file);
@@ -174,7 +174,7 @@ async fn convert_video(
     let full_filter = format!("{},{}", scale_filter, color_filter);
 
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+        Command::new("ffmpeg")
             .args([
                 "-i", &input_path_clone,
                 "-map_metadata", "0",
@@ -306,8 +306,8 @@ async fn images_to_pdf(image_paths: Vec<String>, output_path: String) -> TaskRes
 fn check_dependencies() -> serde_json::Value {
     let ytdlp_path = get_ytdlp_path();
     let deps = vec![
-        ("C:\\Program Files\\LibreOffice\\program\\soffice.exe", "LibreOffice"), 
-        ("C:\\ffmpeg\\bin\\ffmpeg.exe", "ffmpeg"), 
+        ("soffice", "LibreOffice"), 
+        ("ffmpeg", "ffmpeg"), 
         (ytdlp_path.as_str(), "yt-dlp")
     ];
     let results: Vec<serde_json::Value> = deps.iter().map(|(cmd, name)| {
@@ -364,7 +364,7 @@ async fn compress_video(
     let result = tokio::task::spawn_blocking(move || {
 
         // ── Try NVIDIA NVENC first ───────────────────────────────
-        let nvidia = Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+        let nvidia = Command::new("ffmpeg")
             .args([
                 "-hwaccel", "cuda",
                 "-hwaccel_output_format", "cuda",
@@ -399,7 +399,7 @@ async fn compress_video(
         }
 
         // ── Try AMD AMF second ───────────────────────────────────
-        let amd = Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+        let amd = Command::new("ffmpeg")
             .args([
                 "-hwaccel", "d3d11va",
                 "-i", &input_clone,
@@ -433,7 +433,7 @@ async fn compress_video(
         }
 
         // ── Try Intel QuickSync third ────────────────────────────
-        let intel = Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+        let intel = Command::new("ffmpeg")
             .args([
                 "-hwaccel", "qsv",
                 "-i", &input_clone,
@@ -465,7 +465,7 @@ async fn compress_video(
         }
 
         // ── CPU fallback ─────────────────────────────────────────
-        let cpu = Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+        let cpu = Command::new("ffmpeg")
             .args([
                 "-i", &input_clone,
                 "-map_metadata", "0",
