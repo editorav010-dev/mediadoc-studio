@@ -4,7 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 type Theme = "dark" | "light";
-type Screen = "home" | "document" | "audio" | "download" | "image" | "video" | "imageconvert" | "compress";
+type Screen = "home" | "document" | "audio" | "download" | "image" | "video" | "imageconvert" | "compress" | "mergepdf" | "splitpdf" | "greyscalepdf";
 
 interface TaskResult {
   success: boolean;
@@ -99,6 +99,9 @@ export default function App() {
         {screen === "video"       && <VideoScreen       onBack={() => setScreen("home")} />}
         {screen === "imageconvert"&& <ImageConvertScreen onBack={() => setScreen("home")} />}
         {screen === "compress"    && <CompressVideoScreen onBack={() => setScreen("home")} />}
+        {screen === "mergepdf"    && <MergePDFScreen    onBack={() => setScreen("home")} />}
+        {screen === "splitpdf"    && <SplitPDFScreen    onBack={() => setScreen("home")} />}
+        {screen === "greyscalepdf"&& <GreyscalePDFScreen onBack={() => setScreen("home")} />}
       </div>
     </div>
   );
@@ -116,6 +119,9 @@ function HomeScreen({ setScreen }: { setScreen: (s: Screen) => void }) {
     { id: "video",        icon: "🎬", color: "video",   title: "Convert Video",    desc: "MP4, MKV, MOV, AVI, WEBM" },
     { id: "compress",     icon: "🗜️", color: "comp",    title: "Compress Video",   desc: "Resize and reduce file size" },
     { id: "imageconvert", icon: "🔄", color: "imgconv", title: "Convert Image",    desc: "JPG, PNG, WEBP, GIF, BMP" },
+    { id: "mergepdf",     icon: "🔗", color: "doc",     title: "Merge PDF",      desc: "Combine multiple PDFs into one" },
+    { id: "splitpdf",     icon: "✂️", color: "comp",    title: "Split PDF",      desc: "Break PDF by page count or ranges" },
+    { id: "greyscalepdf", icon: "🎨", color: "imgconv", title: "Greyscale PDF",  desc: "Convert colour PDF to greyscale" },
   ] as const;
 
   return (
@@ -675,6 +681,194 @@ function ImageConvertScreen({ onBack }: { onBack: () => void }) {
       </div>
       {status==="converting" && <div className="converting-card"><div className="converting-card-title">⏳ Converting image...</div><div className="progress-bar-track"><div className="progress-bar-fill" /></div></div>}
       {status==="done"  && <div className="result-success">✅ Saved to: <strong>{result?.output_path}</strong></div>}
+      {status==="error" && <div className="result-error">❌ {result?.error_message}</div>}
+    </div>
+  );
+}
+
+function MergePDFScreen({ onBack }: { onBack: () => void }) {
+  const [inputFiles, setInputFiles] = useState<string[]>([]);
+  const [outputDir, saveOutputDir] = useSavedPath("mergepdf");
+  const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
+  const [result, setResult] = useState<TaskResult | null>(null);
+
+  async function pickFiles() {
+    const s = await open({ multiple: true, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (s) setInputFiles(Array.isArray(s) ? s : [s as string]);
+  }
+  async function pickDir() {
+    const s = await open({ directory: true, multiple: false });
+    if (s) saveOutputDir(s as string);
+  }
+  async function run() {
+    if (!inputFiles.length || !outputDir) return;
+    setStatus("converting"); setResult(null);
+    const outPath = outputDir + "\\merged_output.pdf";
+    try {
+      const res = await invoke<TaskResult>("merge_pdfs", { inputPaths: inputFiles, outputPath: outPath });
+      setResult(res); setStatus(res.success ? "done" : "error");
+      if (res.success) addActivity({ name: "merged_output.pdf", meta: `${inputFiles.length} PDFs merged`, time: "Just now" });
+    } catch(e) { setResult({ success: false, output_path: "", error_message: String(e) }); setStatus("error"); }
+  }
+
+  return (
+    <div className="screen">
+      <button className="back-btn" onClick={onBack}>← Back</button>
+      <div className="screen-title">Merge PDF</div>
+      <div className="screen-sub">Combine multiple PDF files into one ordered document</div>
+      <div className="form">
+        <span className="field-label">Select PDFs ({inputFiles.length} selected)</span>
+        <div className={`drop-zone ${inputFiles.length ? "has-file" : ""}`} onClick={pickFiles}>
+          {inputFiles.length ? (
+            <div className="drop-zone-file">✓ {inputFiles.length} PDF(s) selected</div>
+          ) : (
+            <><div className="drop-zone-icon">🔗</div>
+            <div className="drop-zone-text">Drop PDFs or <span style={{color:"var(--accent)"}}>Browse</span></div>
+            <div className="drop-zone-sub">Select 2 or more PDF files — order matters</div></>
+          )}
+        </div>
+        {inputFiles.length > 0 && (
+          <div style={{fontSize:"11px", color:"var(--text-muted)", padding:"4px 0"}}>
+            {inputFiles.map((f, i) => <div key={i}>📄 {f.split("\\").pop()}</div>)}
+          </div>
+        )}
+        <span className="field-label">Save To Folder</span>
+        <div className="file-row">
+          <span className="file-path">{outputDir || "No folder selected"}</span>
+          <button className="btn-secondary" onClick={pickDir}>Browse</button>
+        </div>
+        <button className="btn-primary" onClick={run} disabled={inputFiles.length < 2 || !outputDir || status === "converting"}>
+          {status === "converting" ? "Merging..." : `Merge ${inputFiles.length || ""} PDFs`}
+        </button>
+      </div>
+      {status==="converting" && <div className="converting-card"><div className="converting-card-title">⏳ Merging PDFs...</div><div className="progress-bar-track"><div className="progress-bar-fill" /></div></div>}
+      {status==="done"  && <div className="result-success">✅ Merged PDF saved to: <strong>{result?.output_path}</strong></div>}
+      {status==="error" && <div className="result-error">❌ {result?.error_message}</div>}
+    </div>
+  );
+}
+
+function SplitPDFScreen({ onBack }: { onBack: () => void }) {
+  const [inputFile, setInputFile] = useState("");
+  const [outputDir, saveOutputDir] = useSavedPath("splitpdf");
+  const [mode, setMode] = useState<"count"|"ranges">("count");
+  const [value, setValue] = useState("5");
+  const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
+  const [result, setResult] = useState<TaskResult | null>(null);
+
+  async function pickFile() {
+    const s = await open({ multiple: false, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (s) setInputFile(s as string);
+  }
+  async function pickDir() {
+    const s = await open({ directory: true, multiple: false });
+    if (s) saveOutputDir(s as string);
+  }
+  async function run() {
+    if (!inputFile || !outputDir) return;
+    setStatus("converting"); setResult(null);
+    try {
+      const res = await invoke<TaskResult>("split_pdf", { inputPath: inputFile, outputDir, mode, value });
+      setResult(res); setStatus(res.success ? "done" : "error");
+      if (res.success) addActivity({ name: inputFile.split("\\").pop() || "", meta: `Split — ${res.error_message}`, time: "Just now" });
+    } catch(e) { setResult({ success: false, output_path: "", error_message: String(e) }); setStatus("error"); }
+  }
+
+  return (
+    <div className="screen">
+      <button className="back-btn" onClick={onBack}>← Back</button>
+      <div className="screen-title">Split PDF</div>
+      <div className="screen-sub">Break a PDF into smaller files by page count or custom ranges</div>
+      <div className="form">
+        <span className="field-label">Input PDF</span>
+        <div className={`drop-zone ${inputFile ? "has-file" : ""}`} onClick={pickFile}>
+          {inputFile ? <div className="drop-zone-file">✓ {inputFile.split("\\").pop()}</div> : (
+            <><div className="drop-zone-icon">✂️</div>
+            <div className="drop-zone-text">Drop PDF or <span style={{color:"var(--accent)"}}>Browse</span></div></>
+          )}
+        </div>
+
+        <span className="field-label">Split Mode</span>
+        <div className="pill-group">
+          <button className={`pill ${mode === "count" ? "active" : ""}`} onClick={() => { setMode("count"); setValue("5"); }}>
+            Every N Pages
+          </button>
+          <button className={`pill ${mode === "ranges" ? "active" : ""}`} onClick={() => { setMode("ranges"); setValue("1-3, 4-7, 8-end"); }}>
+            Custom Ranges
+          </button>
+        </div>
+
+        <span className="field-label">{mode === "count" ? "Pages Per File" : "Page Ranges (e.g. 1-3, 4-7, 8-end)"}</span>
+        <input type="text" value={value} onChange={e => setValue(e.target.value)}
+          placeholder={mode === "count" ? "5" : "1-3, 4-7, 8-end"} />
+
+        <span className="field-label">Save To Folder</span>
+        <div className="file-row">
+          <span className="file-path">{outputDir || "No folder selected"}</span>
+          <button className="btn-secondary" onClick={pickDir}>Browse</button>
+        </div>
+        <button className="btn-primary" onClick={run} disabled={!inputFile || !outputDir || !value || status === "converting"}>
+          {status === "converting" ? "Splitting..." : "Split PDF"}
+        </button>
+      </div>
+      {status==="converting" && <div className="converting-card"><div className="converting-card-title">⏳ Splitting PDF...</div><div className="progress-bar-track"><div className="progress-bar-fill" /></div></div>}
+      {status==="done"  && <div className="result-success">✅ {result?.error_message} saved to: <strong>{result?.output_path}</strong></div>}
+      {status==="error" && <div className="result-error">❌ {result?.error_message}</div>}
+    </div>
+  );
+}
+
+function GreyscalePDFScreen({ onBack }: { onBack: () => void }) {
+  const [inputFile, setInputFile] = useState("");
+  const [outputDir, saveOutputDir] = useSavedPath("greyscalepdf");
+  const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
+  const [result, setResult] = useState<TaskResult | null>(null);
+
+  async function pickFile() {
+    const s = await open({ multiple: false, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (s) setInputFile(s as string);
+  }
+  async function pickDir() {
+    const s = await open({ directory: true, multiple: false });
+    if (s) saveOutputDir(s as string);
+  }
+  async function run() {
+    if (!inputFile || !outputDir) return;
+    setStatus("converting"); setResult(null);
+    const stem = inputFile.split("\\").pop()?.replace(".pdf","") || "output";
+    const outPath = outputDir + "\\" + stem + "_greyscale.pdf";
+    try {
+      const res = await invoke<TaskResult>("greyscale_pdf", { inputPath: inputFile, outputPath: outPath });
+      setResult(res); setStatus(res.success ? "done" : "error");
+      if (res.success) addActivity({ name: stem + "_greyscale.pdf", meta: "Converted to greyscale", time: "Just now" });
+    } catch(e) { setResult({ success: false, output_path: "", error_message: String(e) }); setStatus("error"); }
+  }
+
+  return (
+    <div className="screen">
+      <button className="back-btn" onClick={onBack}>← Back</button>
+      <div className="screen-title">Greyscale PDF</div>
+      <div className="screen-sub">Convert a colour PDF to greyscale — ideal for printing cost reduction</div>
+      <div className="form">
+        <span className="field-label">Input PDF</span>
+        <div className={`drop-zone ${inputFile ? "has-file" : ""}`} onClick={pickFile}>
+          {inputFile ? <div className="drop-zone-file">✓ {inputFile.split("\\").pop()}</div> : (
+            <><div className="drop-zone-icon">🎨</div>
+            <div className="drop-zone-text">Drop PDF or <span style={{color:"var(--accent)"}}>Browse</span></div>
+            <div className="drop-zone-sub">Colour PDF will be converted to greyscale</div></>
+          )}
+        </div>
+        <span className="field-label">Save To Folder</span>
+        <div className="file-row">
+          <span className="file-path">{outputDir || "No folder selected"}</span>
+          <button className="btn-secondary" onClick={pickDir}>Browse</button>
+        </div>
+        <button className="btn-primary" onClick={run} disabled={!inputFile || !outputDir || status === "converting"}>
+          {status === "converting" ? "Converting..." : "Convert to Greyscale"}
+        </button>
+      </div>
+      {status==="converting" && <div className="converting-card"><div className="converting-card-title">⏳ Converting to greyscale...</div><div className="progress-bar-track"><div className="progress-bar-fill" /></div><div className="converting-card-sub">Large PDFs may take a moment.</div></div>}
+      {status==="done"  && <div className="result-success">✅ Greyscale PDF saved to: <strong>{result?.output_path}</strong></div>}
       {status==="error" && <div className="result-error">❌ {result?.error_message}</div>}
     </div>
   );

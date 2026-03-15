@@ -11,6 +11,7 @@ pub struct TaskResult {
 fn get_ytdlp_path() -> String {
     // Try common locations
     let candidates = vec![
+        "C:\\Program Files\\Python312\\Scripts\\yt-dlp.exe",
         "C:\\Users\\avspn\\AppData\\Roaming\\Python\\Python312\\Scripts\\yt-dlp.exe",
         "C:\\Users\\avspn\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\yt-dlp.exe",
         "C:\\Users\\avspn\\AppData\\Roaming\\Python\\Scripts\\yt-dlp.exe",
@@ -55,7 +56,7 @@ async fn convert_document(input_path: String, output_format: String, output_dir:
     let output_dir_clone = output_dir.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("soffice")
+        Command::new("C:\\Program Files\\LibreOffice\\program\\soffice.exe")
             .args(["--headless", "--convert-to", &convert_arg_owned, "--outdir", &output_dir_clone, &input_path_clone])
             .output()
     }).await.unwrap();
@@ -107,7 +108,7 @@ async fn convert_audio(input_path: String, output_format: String, bitrate: Strin
     args.push(output_file.clone());
     
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("ffmpeg").args(&args).output()
+        Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe").args(&args).output()
     }).await.unwrap();
     
     match result {
@@ -148,10 +149,10 @@ async fn convert_video(
     if output_format == "gif" {
         return tokio::task::spawn_blocking(move || {
             let palette_file = format!("{}\\palette.png", output_dir_clone);
-            Command::new("ffmpeg")
+            Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
                 .args(["-i", &input_path_clone, "-vf", "fps=15,scale=480:-1:flags=lanczos,palettegen", "-y", &palette_file])
                 .output().ok();
-            let result = Command::new("ffmpeg")
+            let result = Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
                 .args(["-i", &input_path_clone, "-i", &palette_file, "-lavfi", "fps=15,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse", "-y", &output_file_clone])
                 .output();
             let _ = std::fs::remove_file(&palette_file);
@@ -174,7 +175,7 @@ async fn convert_video(
     let full_filter = format!("{},{}", scale_filter, color_filter);
 
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("ffmpeg")
+        Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
             .args([
                 "-i", &input_path_clone,
                 "-map_metadata", "0",
@@ -271,7 +272,15 @@ print(out)
 #[tauri::command]
 async fn download_media(url: String, output_dir: String, cookies_path: Option<String>) -> TaskResult {
     let output_template = format!("{}\\%(title)s.%(ext)s", output_dir);
-    let mut args = vec!["--no-playlist".to_string(), "--retries".to_string(), "3".to_string(), "--continue".to_string(), "-o".to_string(), output_template, url.clone()];
+    let mut args = vec![
+        "--no-playlist".to_string(), 
+        "--retries".to_string(), "3".to_string(), 
+        "--continue".to_string(), 
+        "--ffmpeg-location".to_string(), "C:\\ffmpeg\\bin\\ffmpeg.exe".to_string(),
+        "-f".to_string(), "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best".to_string(),
+        "-o".to_string(), output_template, 
+        url.clone()
+    ];
     if let Some(cookies) = cookies_path { if !cookies.is_empty() { args.push("--cookies".to_string()); args.push(cookies); } }
     
     let result = tokio::task::spawn_blocking(move || {
@@ -302,19 +311,29 @@ async fn images_to_pdf(image_paths: Vec<String>, output_path: String) -> TaskRes
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DepStatus {
+    name: String,
+    command: String,
+    installed: bool,
+}
+
 #[tauri::command]
-fn check_dependencies() -> serde_json::Value {
-    let ytdlp_path = get_ytdlp_path();
-    let deps = vec![
-        ("soffice", "LibreOffice"), 
-        ("ffmpeg", "ffmpeg"), 
-        (ytdlp_path.as_str(), "yt-dlp")
+fn check_dependencies() -> Vec<DepStatus> {
+    let deps: Vec<(&str, &str)> = vec![
+        ("LibreOffice", "C:\\Program Files\\LibreOffice\\program\\soffice.exe"),
+        ("ffmpeg",      "C:\\ffmpeg\\bin\\ffmpeg.exe"),
+        ("yt-dlp",      "C:\\Program Files\\Python312\\Scripts\\yt-dlp.exe"),
     ];
-    let results: Vec<serde_json::Value> = deps.iter().map(|(cmd, name)| {
-        let found = Command::new(cmd).arg("--version").output().is_ok();
-        serde_json::json!({ "name": name, "command": cmd, "installed": found })
-    }).collect();
-    serde_json::json!(results)
+
+    deps.iter().map(|(name, path)| {
+        let installed = std::path::Path::new(path).exists();
+        DepStatus {
+            name: name.to_string(),
+            command: path.to_string(),
+            installed,
+        }
+    }).collect()
 }
 
 #[tauri::command]
@@ -325,193 +344,238 @@ async fn compress_video(
     resolution: String,
     crf: String,
     preset: String,
-) -> TaskResult {
-    let input = std::path::Path::new(&input_path);
-    let stem = input.file_stem().unwrap_or_default().to_string_lossy().to_string();
-    let output_file = format!("{}\\{}_compressed.{}", output_dir, stem, output_format);
+) -> Result<TaskResult, String> {
+    use std::path::Path;
 
-    let cpu_count = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    let threads = ((cpu_count / 2).max(1)).to_string();
+    let input = Path::new(&input_path);
+    let stem = input.file_stem().unwrap_or_default().to_string_lossy();
+    let output_path = format!("{}\\{}_compressed.{}", output_dir, stem, output_format);
 
-    let scale_filter = match resolution.as_str() {
-        "4K"    => "scale='if(gt(iw,ih),3840,-2)':'if(gt(iw,ih),-2,3840)'",
-        "1080p" => "scale='if(gt(iw,ih),1920,-2)':'if(gt(iw,ih),-2,1920)'",
-        "720p"  => "scale='if(gt(iw,ih),1280,-2)':'if(gt(iw,ih),-2,1280)'",
-        "480p"  => "scale='if(gt(iw,ih),854,-2)':'if(gt(iw,ih),-2,854)'",
-        "360p"  => "scale='if(gt(iw,ih),640,-2)':'if(gt(iw,ih),-2,640)'",
-        _       => "scale='trunc(iw/2)*2':'trunc(ih/2)*2'",
-    }.to_string();
+    let crf_num: u32 = crf.parse().unwrap_or(23);
 
-    let color_filter = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
-    let full_filter = format!("{},{}", scale_filter, color_filter);
+    // NVENC quality is set via -qp (0-51, lower = better)
+    // Map CRF 18-35 → qp 18-35 (same scale)
+    let qp = crf_num.to_string();
 
-    let safe_preset = match preset.as_str() {
-        "ultrafast"|"superfast"|"veryfast"|"faster"|
-        "fast"|"medium"|"slow"|"slower"|"veryslow" => preset.to_string(),
-        _ => "fast".to_string(),
+    // For hardware acceleration, complex zscale filters cause `hwaccel_output_format cuda` to crash
+    // Keep a simple scale filter for NVENC
+    let nvenc_scale_filter = match resolution.as_str() {
+        "4K"    => "scale='if(gt(iw,ih),3840,-2)':'if(gt(iw,ih),-2,3840)'".to_string(),
+        "1080p" => "scale='if(gt(iw,ih),1920,-2)':'if(gt(iw,ih),-2,1920)'".to_string(),
+        "720p"  => "scale='if(gt(iw,ih),1280,-2)':'if(gt(iw,ih),-2,1280)'".to_string(),
+        "480p"  => "scale='if(gt(iw,ih),854,-2)':'if(gt(iw,ih),-2,854)'".to_string(),
+        "360p"  => "scale='if(gt(iw,ih),640,-2)':'if(gt(iw,ih),-2,640)'".to_string(),
+        _       => "scale='trunc(iw/2)*2':'trunc(ih/2)*2'".to_string(),
     };
 
-    let output_file_clone = output_file.clone();
-    let input_clone = input_path.clone();
-    let filter_clone = full_filter.clone();
-    let crf_clone = crf.clone();
-    let preset_clone = safe_preset.clone();
-    let threads_clone = threads.clone();
+    // Scale filter: smart portrait/landscape handling for CPU fallback
+    let scale_filter = match resolution.as_str() {
+        "4K"    => "scale='if(gt(iw,ih),3840,-2)':'if(gt(iw,ih),-2,3840)',format=yuv420p".to_string(),
+        "1080p" => "scale='if(gt(iw,ih),1920,-2)':'if(gt(iw,ih),-2,1920)',format=yuv420p".to_string(),
+        "720p"  => "scale='if(gt(iw,ih),1280,-2)':'if(gt(iw,ih),-2,1280)',format=yuv420p".to_string(),
+        "480p"  => "scale='if(gt(iw,ih),854,-2)':'if(gt(iw,ih),-2,854)',format=yuv420p".to_string(),
+        "360p"  => "scale='if(gt(iw,ih),640,-2)':'if(gt(iw,ih),-2,640)',format=yuv420p".to_string(),
+        _       => "format=yuv420p".to_string(), // original — no scaling
+    };
 
-    // Run ffmpeg in a background thread so UI never freezes
-    let result = tokio::task::spawn_blocking(move || {
+    // NVENC preset mapping
+    let nvenc_preset = match preset.as_str() {
+        "ultrafast" => "p1", // fastest NVENC
+        "fast"      => "p2",
+        "medium"    => "p4",
+        "slow"      => "p7", // best NVENC quality
+        _           => "p2",
+    };
 
-        // ── Try NVIDIA NVENC first ───────────────────────────────
-        let nvidia = Command::new("ffmpeg")
-            .args([
-                "-hwaccel", "cuda",
-                "-hwaccel_output_format", "cuda",
-                "-i", &input_clone,
-                "-map_metadata", "0",
-                "-map", "0:v:0",
-                "-map", "0:a:0?",
-                "-vf", &filter_clone,
-                "-c:v", "h264_nvenc",
-                "-preset", "p4",
-                "-cq", &crf_clone,
-                "-profile:v", "high",
-                "-level:v", "4.2",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-ac", "2",
-                "-ar", "44100",
-                "-movflags", "+faststart",
-                "-y",
-                &output_file_clone,
-            ])
-            .output();
+    // Try NVIDIA NVENC first, then CPU fallback
+    let nvenc_args = vec![
+        "-hwaccel".to_string(), "cuda".to_string(),
+        "-hwaccel_output_format".to_string(), "cuda".to_string(),
+        "-i".to_string(), input_path.clone(),
+        "-vf".to_string(), nvenc_scale_filter,
+        "-c:v".to_string(), "h264_nvenc".to_string(),
+        "-preset".to_string(), nvenc_preset.to_string(),
+        "-qp".to_string(), qp.clone(),
+        "-rc".to_string(), "constqp".to_string(),
+        "-b:v".to_string(), "0".to_string(),
+        "-c:a".to_string(), "aac".to_string(),
+        "-b:a".to_string(), "192k".to_string(),
+        "-movflags".to_string(), "+faststart".to_string(),
+        "-y".to_string(),
+        output_path.clone(),
+    ];
 
-        if let Ok(o) = nvidia {
-            if o.status.success() {
-                return TaskResult {
-                    success: true,
-                    output_path: output_file_clone.clone(),
-                    error_message: "✓ Used NVIDIA GPU (NVENC)".to_string(),
-                };
-            }
+    let result = tokio::task::spawn_blocking({
+        let args = nvenc_args.clone();
+        move || {
+            std::process::Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+                .args(&args)
+                .output()
         }
+    }).await.map_err(|e| e.to_string())?;
 
-        // ── Try AMD AMF second ───────────────────────────────────
-        let amd = Command::new("ffmpeg")
-            .args([
-                "-hwaccel", "d3d11va",
-                "-i", &input_clone,
-                "-map_metadata", "0",
-                "-map", "0:v:0",
-                "-map", "0:a:0?",
-                "-vf", &filter_clone,
-                "-c:v", "h264_amf",
-                "-quality", "balanced",
-                "-qp_i", &crf_clone,
-                "-qp_p", &crf_clone,
-                "-profile:v", "high",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-ac", "2",
-                "-ar", "44100",
-                "-movflags", "+faststart",
-                "-y",
-                &output_file_clone,
-            ])
-            .output();
-
-        if let Ok(o) = amd {
-            if o.status.success() {
-                return TaskResult {
-                    success: true,
-                    output_path: output_file_clone.clone(),
-                    error_message: "✓ Used AMD GPU (AMF)".to_string(),
-                };
-            }
-        }
-
-        // ── Try Intel QuickSync third ────────────────────────────
-        let intel = Command::new("ffmpeg")
-            .args([
-                "-hwaccel", "qsv",
-                "-i", &input_clone,
-                "-map_metadata", "0",
-                "-map", "0:v:0",
-                "-map", "0:a:0?",
-                "-vf", &filter_clone,
-                "-c:v", "h264_qsv",
-                "-global_quality", &crf_clone,
-                "-profile:v", "high",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-ac", "2",
-                "-ar", "44100",
-                "-movflags", "+faststart",
-                "-y",
-                &output_file_clone,
-            ])
-            .output();
-
-        if let Ok(o) = intel {
-            if o.status.success() {
-                return TaskResult {
-                    success: true,
-                    output_path: output_file_clone.clone(),
-                    error_message: "✓ Used Intel QuickSync GPU".to_string(),
-                };
-            }
-        }
-
-        // ── CPU fallback ─────────────────────────────────────────
-        let cpu = Command::new("ffmpeg")
-            .args([
-                "-i", &input_clone,
-                "-map_metadata", "0",
-                "-map", "0:v:0",
-                "-map", "0:a:0?",
-                "-c:v", "libx264",
-                "-crf", &crf_clone,
-                "-preset", &preset_clone,
-                "-profile:v", "high",
-                "-level:v", "4.2",
-                "-vf", &filter_clone,
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-ac", "2",
-                "-ar", "44100",
-                "-movflags", "+faststart",
-                "-threads", &threads_clone,
-                "-y",
-                &output_file_clone,
-            ])
-            .output();
-
-        match cpu {
-            Ok(o) if o.status.success() => TaskResult {
+    match result {
+        Ok(output) if output.status.success() => {
+            return Ok(TaskResult {
                 success: true,
-                output_path: output_file_clone,
-                error_message: "✓ Used CPU encoding (no GPU detected)".to_string(),
-            },
-            Ok(o) => {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                let error_line = stderr.lines()
-                    .filter(|l| l.contains("Error") || l.contains("Invalid") || l.contains("failed"))
-                    .last()
-                    .unwrap_or("Compression failed — check input file format")
-                    .to_string();
-                TaskResult { success: false, output_path: String::new(), error_message: error_line }
-            },
-            Err(e) => TaskResult {
-                success: false,
-                output_path: String::new(),
-                error_message: format!("ffmpeg not found: {}", e),
-            },
+                output_path,
+                error_message: String::new(),
+            });
         }
-    }).await.unwrap();
+        _ => {
+            // Fallback: CPU encoding with libx264
+            let cpu_preset = match preset.as_str() {
+                "ultrafast" => "ultrafast",
+                "fast"      => "fast",
+                "medium"    => "medium",
+                "slow"      => "slow",
+                _           => "fast",
+            };
 
-    result
+            let cpu_args = vec![
+                "-i".to_string(), input_path.clone(),
+                "-vf".to_string(), scale_filter,
+                "-c:v".to_string(), "libx264".to_string(),
+                "-preset".to_string(), cpu_preset.to_string(),
+                "-crf".to_string(), crf.clone(),
+                "-c:a".to_string(), "aac".to_string(),
+                "-b:a".to_string(), "192k".to_string(),
+                "-movflags".to_string(), "+faststart".to_string(),
+                "-threads".to_string(), "0".to_string(),
+                "-y".to_string(),
+                output_path.clone(),
+            ];
+
+            let cpu_result = tokio::task::spawn_blocking(move || {
+                std::process::Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+                    .args(&cpu_args)
+                    .output()
+            }).await.map_err(|e| e.to_string())?;
+
+            match cpu_result {
+                Ok(out) if out.status.success() => Ok(TaskResult {
+                    success: true,
+                    output_path,
+                    error_message: String::new(),
+                }),
+                Ok(out) => Ok(TaskResult {
+                    success: false,
+                    output_path: String::new(),
+                    error_message: String::from_utf8_lossy(&out.stderr).chars().take(300).collect(),
+                }),
+                Err(e) => Ok(TaskResult {
+                    success: false,
+                    output_path: String::new(),
+                    error_message: e.to_string(),
+                }),
+            }
+        }
+    }
+}
+
+#[tauri::command]
+async fn merge_pdfs(input_paths: Vec<String>, output_path: String) -> Result<TaskResult, String> {
+    let result = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("python")
+            .args([
+                "-c",
+                &format!(
+                    "import sys; sys.path.insert(0, r'C:\\Users\\avspn\\mediadoc-studio\\packages\\domain'); \
+                     from adapters.pdf_tools import merge_pdfs; \
+                     import json; r = merge_pdfs({:?}, {:?}); print(json.dumps(r))",
+                    input_paths, output_path
+                ),
+            ])
+            .output()
+    }).await.map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+                Ok(TaskResult {
+                    success: val["success"].as_bool().unwrap_or(false),
+                    output_path: val["output_path"].as_str().unwrap_or("").to_string(),
+                    error_message: val["error_message"].as_str().unwrap_or("").to_string(),
+                })
+            } else {
+                Ok(TaskResult { success: false, output_path: String::new(),
+                    error_message: format!("Parse error: {}", stdout) })
+            }
+        }
+        Err(e) => Ok(TaskResult { success: false, output_path: String::new(), error_message: e.to_string() }),
+    }
+}
+
+#[tauri::command]
+async fn split_pdf(
+    input_path: String, output_dir: String,
+    mode: String, value: String,
+) -> Result<TaskResult, String> {
+    let result = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("python")
+            .args([
+                "-c",
+                &format!(
+                    "import sys; sys.path.insert(0, r'C:\\Users\\avspn\\mediadoc-studio\\packages\\domain'); \
+                     from adapters.pdf_tools import split_pdf; \
+                     import json; r = split_pdf({:?}, {:?}, {:?}, {:?}); print(json.dumps(r))",
+                    input_path, output_dir, mode, value
+                ),
+            ])
+            .output()
+    }).await.map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+                Ok(TaskResult {
+                    success: val["success"].as_bool().unwrap_or(false),
+                    output_path: val["output_path"].as_str().unwrap_or("").to_string(),
+                    error_message: val["error_message"].as_str().unwrap_or("").to_string(),
+                })
+            } else {
+                Ok(TaskResult { success: false, output_path: String::new(),
+                    error_message: format!("Parse error: {}", stdout) })
+            }
+        }
+        Err(e) => Ok(TaskResult { success: false, output_path: String::new(), error_message: e.to_string() }),
+    }
+}
+
+#[tauri::command]
+async fn greyscale_pdf(input_path: String, output_path: String) -> Result<TaskResult, String> {
+    let result = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("python")
+            .args([
+                "-c",
+                &format!(
+                    "import sys; sys.path.insert(0, r'C:\\Users\\avspn\\mediadoc-studio\\packages\\domain'); \
+                     from adapters.pdf_tools import greyscale_pdf; \
+                     import json; r = greyscale_pdf({:?}, {:?}); print(json.dumps(r))",
+                    input_path, output_path
+                ),
+            ])
+            .output()
+    }).await.map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+                Ok(TaskResult {
+                    success: val["success"].as_bool().unwrap_or(false),
+                    output_path: val["output_path"].as_str().unwrap_or("").to_string(),
+                    error_message: val["error_message"].as_str().unwrap_or("").to_string(),
+                })
+            } else {
+                Ok(TaskResult { success: false, output_path: String::new(),
+                    error_message: format!("Parse error: {}", stdout) })
+            }
+        }
+        Err(e) => Ok(TaskResult { success: false, output_path: String::new(), error_message: e.to_string() }),
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -529,6 +593,9 @@ pub fn run() {
             download_media,
             images_to_pdf,
             check_dependencies,
+            merge_pdfs,
+            split_pdf,
+            greyscale_pdf,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
