@@ -1,32 +1,47 @@
 {
-  "productName": "Media & Doc Studio",
-  "version": "0.1.0",
-  "identifier": "com.mediadocstudio.app",
+  "productName": "Formatica",
+  "version": "1.0.0",
+  "identifier": "com.formatica.app",
   "build": {
-    "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "Media & Doc Studio",
+        "title": "Formatica",
         "width": 1100,
         "height": 720,
         "resizable": true,
-        "fullscreen": false,
-        "minWidth": 800,
-        "minHeight": 600
+        "fullscreen": false
       }
     ],
     "security": {
       "csp": null
     }
   },
-  "plugins": {
-    "shell": {
-      "open": true
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "publisher": "Formatica",
+    "copyright": "© 2026 Formatica",
+    "shortDescription": "Convert, download, and extract — privately.",
+    "resources": {
+      "C:\\ffmpeg\\bin\\ffmpeg.exe": "ffmpeg/ffmpeg.exe"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   }
 }

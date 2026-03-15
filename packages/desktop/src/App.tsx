@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 type Theme = "dark" | "light";
-type Screen = "home" | "document" | "audio" | "download" | "image" | "video" | "imageconvert" | "compress" | "mergepdf" | "splitpdf" | "greyscalepdf";
+type Screen = "home" | "document" | "audio" | "download" | "image" | "video" | "imageconvert" | "compress" | "mergepdf" | "splitpdf" | "greyscalepdf" | "onboarding";
 
 interface TaskResult {
   success: boolean;
@@ -47,6 +48,29 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("mds_theme") as Theme) || "dark");
   const [screen, setScreen] = useState<Screen>("home");
   const [deps, setDeps] = useState<DepStatus[]>([]);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showLibreOfficePrompt, setShowLibreOfficePrompt] = useState(false);
+
+  useEffect(() => {
+    if (!showOnboarding) {
+      invoke<DepStatus[]>("check_dependencies").then(deps => {
+        setDeps(deps);
+        const lo = deps.find(d => d.name === "LibreOffice");
+        if (lo && !lo.installed) setShowLibreOfficePrompt(true);
+      });
+    }
+  }, [showOnboarding]);
+
+  useEffect(() => {
+    invoke<boolean>("is_first_run").then(first => {
+      if (first) setShowOnboarding(true);
+    });
+  }, []);
+
+  function completeOnboarding() {
+    invoke("mark_initialized");
+    setShowOnboarding(false);
+  }
 
   useEffect(() => {
     localStorage.setItem("mds_theme", theme);
@@ -61,13 +85,14 @@ export default function App() {
 
   return (
     <div className={`app theme-${theme}`}>
+      {showOnboarding && <OnboardingScreen onComplete={completeOnboarding} />}
       {/* Header */}
       <header className="app-header">
         <div className="header-left">
-          <div className="header-logo">M</div>
+          <div className="header-logo">F</div>
           <div>
-            <div className="header-title">Media & Doc Studio</div>
-            <div className="header-tagline">Convert, download, and extract — privately, locally.</div>
+            <div className="header-title">Formatica</div>
+            <div className="header-tagline">Convert, download, and extract — privately.</div>
           </div>
         </div>
         <div className="header-right">
@@ -103,6 +128,43 @@ export default function App() {
         {screen === "splitpdf"    && <SplitPDFScreen    onBack={() => setScreen("home")} />}
         {screen === "greyscalepdf"&& <GreyscalePDFScreen onBack={() => setScreen("home")} />}
       </div>
+
+      {showLibreOfficePrompt && (
+        <div style={{
+          position:"fixed", inset:0, background:"rgba(0,0,0,0.7)",
+          display:"flex", alignItems:"center", justifyContent: "center",
+          zIndex:999, padding:"40px"
+        }}>
+          <div style={{
+            background:"var(--bg-card)", border:"1px solid var(--border)",
+            borderRadius:"16px", padding:"32px", maxWidth:"400px",
+            textAlign:"center"
+          }}>
+            <div style={{fontSize:"40px", marginBottom:"16px"}}>📄</div>
+            <div style={{fontSize:"18px", fontWeight:"700", marginBottom:"8px",
+              color:"var(--text-primary)"}}>
+              Install LibreOffice for Document Conversion
+            </div>
+            <div style={{fontSize:"13px", color:"var(--text-secondary)",
+              marginBottom:"24px", lineHeight:"1.6"}}>
+              Document conversion (DOCX, PDF, XLSX etc.) requires LibreOffice.
+              It's free and takes about 2 minutes to install.
+            </div>
+            <div style={{display:"flex", flexDirection:"column", gap:"10px"}}>
+              <button className="btn-primary" onClick={() => {
+                invoke("open_url", { url: "https://www.libreoffice.org/download/libreoffice-fresh/" });
+                setShowLibreOfficePrompt(false);
+              }}>
+                Download LibreOffice (Free)
+              </button>
+              <button className="btn-secondary"
+                onClick={() => setShowLibreOfficePrompt(false)}>
+                Skip for now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -191,6 +253,23 @@ function DocumentScreen({ onBack }: { onBack: () => void }) {
   }
 
   const fileName = inputFile.split("\\").pop() || "";
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  useEffect(() => {
+    let unDrop: any, unEnter: any, unLeave: any;
+    listen("tauri://drag-drop", (e: any) => {
+      setIsDragOver(false);
+      const paths = e.payload.paths;
+      if (paths && paths.length > 0) setInputFile(paths[0]);
+    }).then(u => unDrop = u);
+    listen("tauri://drag-enter", () => setIsDragOver(true)).then(u => unEnter = u);
+    listen("tauri://drag-leave", () => setIsDragOver(false)).then(u => unLeave = u);
+    return () => {
+      if (unDrop) unDrop();
+      if (unEnter) unEnter();
+      if (unLeave) unLeave();
+    };
+  }, []);
 
   return (
     <div className="screen">
@@ -199,7 +278,7 @@ function DocumentScreen({ onBack }: { onBack: () => void }) {
       <div className="screen-sub">Locally processed — no cloud upload</div>
       <div className="form">
         <span className="field-label">Input File</span>
-        <div className={`drop-zone ${inputFile ? "has-file" : ""}`} onClick={pickFile}>
+        <div className={`drop-zone ${inputFile ? "has-file" : ""} ${isDragOver ? "drag-over" : ""}`} onClick={pickFile}>
           {inputFile ? (
             <>
               <div className="drop-zone-file">✓ {fileName}</div>
@@ -255,6 +334,23 @@ function AudioScreen({ onBack }: { onBack: () => void }) {
   const [outputDir, saveOutputDir] = useSavedPath("audio");
   const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
   const [result, setResult] = useState<TaskResult | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  useEffect(() => {
+    let unDrop: any, unEnter: any, unLeave: any;
+    listen("tauri://drag-drop", (e: any) => {
+      setIsDragOver(false);
+      const paths = e.payload.paths;
+      if (paths && paths.length > 0) setInputFile(paths[0]);
+    }).then(u => unDrop = u);
+    listen("tauri://drag-enter", () => setIsDragOver(true)).then(u => unEnter = u);
+    listen("tauri://drag-leave", () => setIsDragOver(false)).then(u => unLeave = u);
+    return () => {
+      if (unDrop) unDrop();
+      if (unEnter) unEnter();
+      if (unLeave) unLeave();
+    };
+  }, []);
 
   const formats = ["mp3","aac","wav","flac","ogg","m4a","opus"];
 
@@ -283,7 +379,7 @@ function AudioScreen({ onBack }: { onBack: () => void }) {
       <div className="screen-sub">MP3 · AAC · WAV from any video file</div>
       <div className="form">
         <span className="field-label">Input File</span>
-        <div className={`drop-zone ${inputFile ? "has-file" : ""}`} onClick={pickFile}>
+        <div className={`drop-zone ${inputFile ? "has-file" : ""} ${isDragOver ? "drag-over" : ""}`} onClick={pickFile}>
           {inputFile ? <div className="drop-zone-file">✓ {inputFile.split("\\").pop()}</div> : (
             <><div className="drop-zone-icon">🎬</div><div className="drop-zone-text">Drop file or <span style={{color:"var(--accent)"}}>Browse</span></div><div className="drop-zone-sub">MP4 · MKV · AVI · MOV · WEBM · MP3 · WAV · FLAC</div></>
           )}
@@ -370,6 +466,23 @@ function ImageScreen({ onBack }: { onBack: () => void }) {
   const [outputDir, saveOutputDir] = useSavedPath("imagepdf");
   const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  useEffect(() => {
+    let unDrop: any, unEnter: any, unLeave: any;
+    listen("tauri://drag-drop", (e: any) => {
+      setIsDragOver(false);
+      const paths = e.payload.paths;
+      if (paths && paths.length > 0) setImageFiles(paths);
+    }).then(u => unDrop = u);
+    listen("tauri://drag-enter", () => setIsDragOver(true)).then(u => unEnter = u);
+    listen("tauri://drag-leave", () => setIsDragOver(false)).then(u => unLeave = u);
+    return () => {
+      if (unDrop) unDrop();
+      if (unEnter) unEnter();
+      if (unLeave) unLeave();
+    };
+  }, []);
 
   async function pickImages() {
     const s = await open({ multiple:true, filters:[{name:"Images",extensions:["jpg","jpeg","png","webp","bmp","tiff"]}] });
@@ -397,7 +510,7 @@ function ImageScreen({ onBack }: { onBack: () => void }) {
       <div className="screen-sub">Combine multiple images into a single PDF</div>
       <div className="form">
         <span className="field-label">Select Images ({imageFiles.length} selected)</span>
-        <div className={`drop-zone ${imageFiles.length ? "has-file" : ""}`} onClick={pickImages}>
+        <div className={`drop-zone ${imageFiles.length ? "has-file" : ""} ${isDragOver ? "drag-over" : ""}`} onClick={pickImages}>
           {imageFiles.length ? <div className="drop-zone-file">✓ {imageFiles.length} image(s) selected</div> : (
             <><div className="drop-zone-icon">🖼️</div><div className="drop-zone-text">Drop images or <span style={{color:"var(--accent)"}}>Browse</span></div><div className="drop-zone-sub">JPG · PNG · WEBP · BMP · TIFF — select multiple</div></>
           )}
@@ -426,6 +539,23 @@ function VideoScreen({ onBack }: { onBack: () => void }) {
   const [outputDir, saveOutputDir] = useSavedPath("video");
   const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
   const [result, setResult] = useState<TaskResult | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  useEffect(() => {
+    let unDrop: any, unEnter: any, unLeave: any;
+    listen("tauri://drag-drop", (e: any) => {
+      setIsDragOver(false);
+      const paths = e.payload.paths;
+      if (paths && paths.length > 0) setInputFile(paths[0]);
+    }).then(u => unDrop = u);
+    listen("tauri://drag-enter", () => setIsDragOver(true)).then(u => unEnter = u);
+    listen("tauri://drag-leave", () => setIsDragOver(false)).then(u => unLeave = u);
+    return () => {
+      if (unDrop) unDrop();
+      if (unEnter) unEnter();
+      if (unLeave) unLeave();
+    };
+  }, []);
 
   const formats = ["mp4","mkv","mov","avi","webm","gif"];
 
@@ -454,7 +584,7 @@ function VideoScreen({ onBack }: { onBack: () => void }) {
       <div className="screen-sub">Change format — preserves quality and aspect ratio</div>
       <div className="form">
         <span className="field-label">Input File</span>
-        <div className={`drop-zone ${inputFile?"has-file":""}`} onClick={pickFile}>
+        <div className={`drop-zone ${inputFile?"has-file":""} ${isDragOver ? "drag-over" : ""}`} onClick={pickFile}>
           {inputFile ? <div className="drop-zone-file">✓ {inputFile.split("\\").pop()}</div> : (
             <><div className="drop-zone-icon">🎬</div><div className="drop-zone-text">Drop video or <span style={{color:"var(--accent)"}}>Browse</span></div><div className="drop-zone-sub">MP4 · MKV · AVI · MOV · WEBM · FLV</div></>
           )}
@@ -499,6 +629,23 @@ function CompressVideoScreen({ onBack }: { onBack: () => void }) {
   const [currentFile, setCurrentFile] = useState("");
   const [results, setResults] = useState<string[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  useEffect(() => {
+    let unDrop: any, unEnter: any, unLeave: any;
+    listen("tauri://drag-drop", (e: any) => {
+      setIsDragOver(false);
+      const paths = e.payload.paths;
+      if (paths && paths.length > 0) setInputFiles(paths);
+    }).then(u => unDrop = u);
+    listen("tauri://drag-enter", () => setIsDragOver(true)).then(u => unEnter = u);
+    listen("tauri://drag-leave", () => setIsDragOver(false)).then(u => unLeave = u);
+    return () => {
+      if (unDrop) unDrop();
+      if (unEnter) unEnter();
+      if (unLeave) unLeave();
+    };
+  }, []);
 
   const crfNum = parseInt(crf);
   const crfLabel = crfNum <= 20 ? "High Quality" : crfNum <= 27 ? "Balanced" : "Small File";
@@ -542,7 +689,7 @@ function CompressVideoScreen({ onBack }: { onBack: () => void }) {
         </div>
 
         <span className="field-label">Input Videos ({inputFiles.length} selected)</span>
-        <div className={`drop-zone ${inputFiles.length?"has-file":""}`} onClick={pickFiles}>
+        <div className={`drop-zone ${inputFiles.length?"has-file":""} ${isDragOver ? "drag-over" : ""}`} onClick={pickFiles}>
           {inputFiles.length ? <div className="drop-zone-file">✓ {inputFiles.length} video(s) selected</div> : (
             <><div className="drop-zone-icon">🎬</div><div className="drop-zone-text">Drop videos or <span style={{color:"var(--accent)"}}>Browse</span></div><div className="drop-zone-sub">MP4 · MKV · AVI · MOV — select multiple</div></>
           )}
@@ -608,6 +755,23 @@ function ImageConvertScreen({ onBack }: { onBack: () => void }) {
   const [outputDir, saveOutputDir] = useSavedPath("imgconv");
   const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
   const [result, setResult] = useState<TaskResult | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  useEffect(() => {
+    let unDrop: any, unEnter: any, unLeave: any;
+    listen("tauri://drag-drop", (e: any) => {
+      setIsDragOver(false);
+      const paths = e.payload.paths;
+      if (paths && paths.length > 0) setInputFile(paths[0]);
+    }).then(u => unDrop = u);
+    listen("tauri://drag-enter", () => setIsDragOver(true)).then(u => unEnter = u);
+    listen("tauri://drag-leave", () => setIsDragOver(false)).then(u => unLeave = u);
+    return () => {
+      if (unDrop) unDrop();
+      if (unEnter) unEnter();
+      if (unLeave) unLeave();
+    };
+  }, []);
 
   const formats = ["jpg","png","webp","gif","bmp","tiff"];
   const inputExt = inputFile.split(".").pop()?.toLowerCase() || "";
@@ -641,7 +805,7 @@ function ImageConvertScreen({ onBack }: { onBack: () => void }) {
       <div className="screen-sub">JPG · PNG · WEBP · GIF · BMP · TIFF</div>
       <div className="form">
         <span className="field-label">Input Image</span>
-        <div className={`drop-zone ${inputFile?"has-file":""}`} onClick={pickFile}>
+        <div className={`drop-zone ${inputFile?"has-file":""} ${isDragOver ? "drag-over" : ""}`} onClick={pickFile}>
           {inputFile ? <div className="drop-zone-file">✓ {inputFile.split("\\").pop()}</div> : (
             <><div className="drop-zone-icon">🖼️</div><div className="drop-zone-text">Drop image or <span style={{color:"var(--accent)"}}>Browse</span></div><div className="drop-zone-sub">JPG · PNG · WEBP · GIF · BMP · TIFF</div></>
           )}
@@ -691,6 +855,23 @@ function MergePDFScreen({ onBack }: { onBack: () => void }) {
   const [outputDir, saveOutputDir] = useSavedPath("mergepdf");
   const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
   const [result, setResult] = useState<TaskResult | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  useEffect(() => {
+    let unDrop: any, unEnter: any, unLeave: any;
+    listen("tauri://drag-drop", (e: any) => {
+      setIsDragOver(false);
+      const paths = e.payload.paths;
+      if (paths && paths.length > 0) setInputFiles(paths);
+    }).then(u => unDrop = u);
+    listen("tauri://drag-enter", () => setIsDragOver(true)).then(u => unEnter = u);
+    listen("tauri://drag-leave", () => setIsDragOver(false)).then(u => unLeave = u);
+    return () => {
+      if (unDrop) unDrop();
+      if (unEnter) unEnter();
+      if (unLeave) unLeave();
+    };
+  }, []);
 
   async function pickFiles() {
     const s = await open({ multiple: true, filters: [{ name: "PDF", extensions: ["pdf"] }] });
@@ -718,7 +899,7 @@ function MergePDFScreen({ onBack }: { onBack: () => void }) {
       <div className="screen-sub">Combine multiple PDF files into one ordered document</div>
       <div className="form">
         <span className="field-label">Select PDFs ({inputFiles.length} selected)</span>
-        <div className={`drop-zone ${inputFiles.length ? "has-file" : ""}`} onClick={pickFiles}>
+        <div className={`drop-zone ${inputFiles.length ? "has-file" : ""} ${isDragOver ? "drag-over" : ""}`} onClick={pickFiles}>
           {inputFiles.length ? (
             <div className="drop-zone-file">✓ {inputFiles.length} PDF(s) selected</div>
           ) : (
@@ -755,6 +936,23 @@ function SplitPDFScreen({ onBack }: { onBack: () => void }) {
   const [value, setValue] = useState("5");
   const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
   const [result, setResult] = useState<TaskResult | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  useEffect(() => {
+    let unDrop: any, unEnter: any, unLeave: any;
+    listen("tauri://drag-drop", (e: any) => {
+      setIsDragOver(false);
+      const paths = e.payload.paths;
+      if (paths && paths.length > 0) setInputFile(paths[0]);
+    }).then(u => unDrop = u);
+    listen("tauri://drag-enter", () => setIsDragOver(true)).then(u => unEnter = u);
+    listen("tauri://drag-leave", () => setIsDragOver(false)).then(u => unLeave = u);
+    return () => {
+      if (unDrop) unDrop();
+      if (unEnter) unEnter();
+      if (unLeave) unLeave();
+    };
+  }, []);
 
   async function pickFile() {
     const s = await open({ multiple: false, filters: [{ name: "PDF", extensions: ["pdf"] }] });
@@ -781,7 +979,7 @@ function SplitPDFScreen({ onBack }: { onBack: () => void }) {
       <div className="screen-sub">Break a PDF into smaller files by page count or custom ranges</div>
       <div className="form">
         <span className="field-label">Input PDF</span>
-        <div className={`drop-zone ${inputFile ? "has-file" : ""}`} onClick={pickFile}>
+        <div className={`drop-zone ${inputFile ? "has-file" : ""} ${isDragOver ? "drag-over" : ""}`} onClick={pickFile}>
           {inputFile ? <div className="drop-zone-file">✓ {inputFile.split("\\").pop()}</div> : (
             <><div className="drop-zone-icon">✂️</div>
             <div className="drop-zone-text">Drop PDF or <span style={{color:"var(--accent)"}}>Browse</span></div></>
@@ -823,6 +1021,23 @@ function GreyscalePDFScreen({ onBack }: { onBack: () => void }) {
   const [outputDir, saveOutputDir] = useSavedPath("greyscalepdf");
   const [status, setStatus] = useState<"idle"|"converting"|"done"|"error">("idle");
   const [result, setResult] = useState<TaskResult | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  useEffect(() => {
+    let unDrop: any, unEnter: any, unLeave: any;
+    listen("tauri://drag-drop", (e: any) => {
+      setIsDragOver(false);
+      const paths = e.payload.paths;
+      if (paths && paths.length > 0) setInputFile(paths[0]);
+    }).then(u => unDrop = u);
+    listen("tauri://drag-enter", () => setIsDragOver(true)).then(u => unEnter = u);
+    listen("tauri://drag-leave", () => setIsDragOver(false)).then(u => unLeave = u);
+    return () => {
+      if (unDrop) unDrop();
+      if (unEnter) unEnter();
+      if (unLeave) unLeave();
+    };
+  }, []);
 
   async function pickFile() {
     const s = await open({ multiple: false, filters: [{ name: "PDF", extensions: ["pdf"] }] });
@@ -851,7 +1066,7 @@ function GreyscalePDFScreen({ onBack }: { onBack: () => void }) {
       <div className="screen-sub">Convert a colour PDF to greyscale — ideal for printing cost reduction</div>
       <div className="form">
         <span className="field-label">Input PDF</span>
-        <div className={`drop-zone ${inputFile ? "has-file" : ""}`} onClick={pickFile}>
+        <div className={`drop-zone ${inputFile ? "has-file" : ""} ${isDragOver ? "drag-over" : ""}`} onClick={pickFile}>
           {inputFile ? <div className="drop-zone-file">✓ {inputFile.split("\\").pop()}</div> : (
             <><div className="drop-zone-icon">🎨</div>
             <div className="drop-zone-text">Drop PDF or <span style={{color:"var(--accent)"}}>Browse</span></div>
@@ -870,6 +1085,78 @@ function GreyscalePDFScreen({ onBack }: { onBack: () => void }) {
       {status==="converting" && <div className="converting-card"><div className="converting-card-title">⏳ Converting to greyscale...</div><div className="progress-bar-track"><div className="progress-bar-fill" /></div><div className="converting-card-sub">Large PDFs may take a moment.</div></div>}
       {status==="done"  && <div className="result-success">✅ Greyscale PDF saved to: <strong>{result?.output_path}</strong></div>}
       {status==="error" && <div className="result-error">❌ {result?.error_message}</div>}
+    </div>
+  );
+}
+
+function OnboardingScreen({ onComplete }: { onComplete: () => void }) {
+  const [step, setStep] = useState(1);
+  const [downloading, setDownloading] = useState(false);
+
+  async function handleComplete() {
+    setDownloading(true);
+    try {
+      await invoke("ensure_ytdlp");
+    } catch(e) {
+      console.log("yt-dlp download failed, will retry on use:", e);
+    }
+    setDownloading(false);
+    onComplete();
+  }
+  const steps = [
+    {
+      icon: "🛡️",
+      title: "Privacy First",
+      body: "All document conversions and media processing happen entirely on your device. Your files never leave your computer."
+    },
+    {
+      icon: "⚡",
+      title: "GPU Accelerated",
+      body: "Video compression uses your GPU automatically for 5-10x faster processing. Falls back to CPU if needed."
+    },
+    {
+      icon: "🚀",
+      title: "You're All Set",
+      body: "10 powerful tools in one app — welcome to Formatica."
+    }
+  ];
+  const current = steps[step - 1];
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "var(--bg-base)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 1000, flexDirection: "column", gap: "24px", padding: "40px"
+    }}>
+      <div style={{textAlign:"center", maxWidth:"400px"}}>
+        <div style={{fontSize:"64px", marginBottom:"20px"}}>{current.icon}</div>
+        <div style={{fontFamily:"inherit", fontSize:"24px", fontWeight:"700",
+          color:"var(--text-primary)", marginBottom:"12px"}}>{current.title}</div>
+        <div style={{fontSize:"15px", color:"var(--text-secondary)",
+          lineHeight:"1.6"}}>{current.body}</div>
+      </div>
+      <div style={{display:"flex", gap:"6px", margin:"8px 0"}}>
+        {steps.map((_, i) => (
+          <div key={i} style={{
+            width: i+1===step ? "24px" : "8px", height:"8px",
+            borderRadius:"4px", background: i+1===step ? "var(--accent)" : "var(--border)",
+            transition:"all 0.3s ease"
+          }} />
+        ))}
+      </div>
+      <button className="btn-primary" style={{width:"200px", padding:"13px"}}
+        onClick={() => step < 3 ? setStep(s => s+1) : handleComplete()}
+        disabled={downloading}>
+        {downloading ? "Setting up..." : step < 3 ? "Next →" : "Get Started"}
+      </button>
+      {downloading && (
+        <div style={{fontSize:"12px", color:"var(--text-muted)", marginTop:"8px"}}>
+          Downloading yt-dlp for media downloads...
+        </div>
+      )}
+      {step > 1 && (
+        <button className="back-btn" onClick={() => setStep(s => s-1)}>← Back</button>
+      )}
     </div>
   );
 }

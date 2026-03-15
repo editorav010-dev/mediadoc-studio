@@ -356,6 +356,12 @@ html, body, #root {
 .drop-zone-file  { font-size: 13px; font-weight: 600; color: var(--success); }
 .drop-zone-meta  { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
+.drop-zone.drag-over {
+  border-color: var(--accent) !important;
+  background: rgba(79,107,244,0.08) !important;
+  transform: scale(1.01);
+}
+
 /* ── Format Pills ── */
 .pill-group { display: flex; gap: 6px; flex-wrap: wrap; }
 

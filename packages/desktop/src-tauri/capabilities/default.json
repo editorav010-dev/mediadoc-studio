@@ -9,7 +9,9 @@
     "shell:default",
     "shell:allow-open",
     "dialog:default",
+    "dialog:allow-open",
     "fs:default",
+    "core:window:allow-start-dragging",
     {
       "identifier": "shell:allow-execute",
       "allow": [

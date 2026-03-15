@@ -8,22 +8,85 @@ pub struct TaskResult {
     pub error_message: String,
 }
 
-fn get_ytdlp_path() -> String {
-    // Try common locations
-    let candidates = vec![
-        "C:\\Program Files\\Python312\\Scripts\\yt-dlp.exe",
-        "C:\\Users\\avspn\\AppData\\Roaming\\Python\\Python312\\Scripts\\yt-dlp.exe",
-        "C:\\Users\\avspn\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\yt-dlp.exe",
-        "C:\\Users\\avspn\\AppData\\Roaming\\Python\\Scripts\\yt-dlp.exe",
-        "C:\\Python313\\Scripts\\yt-dlp.exe",
-        "yt-dlp",
-    ];
-    for path in candidates {
-        if std::path::Path::new(path).exists() || path == "yt-dlp" {
-            return path.to_string();
+fn ytdlp_path() -> String {
+    // Managed download path
+    let managed = dirs::config_dir()
+        .unwrap_or_default()
+        .join("Formatica")
+        .join("bin")
+        .join("yt-dlp.exe");
+    if managed.exists() {
+        return managed.to_string_lossy().to_string();
+    }
+    // Legacy hardcoded fallback for dev
+    "C:\\Users\\avspn\\AppData\\Roaming\\Python\\Python312\\Scripts\\yt-dlp.exe".to_string()
+}
+
+fn ffmpeg_path() -> String {
+    // Check next to the exe (production bundle)
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+    
+    if let Some(dir) = exe_dir {
+        let bundled = dir.join("ffmpeg").join("ffmpeg.exe");
+        if bundled.exists() {
+            return bundled.to_string_lossy().to_string();
         }
     }
-    "yt-dlp".to_string()
+    // Dev fallback
+    "C:\\ffmpeg\\bin\\ffmpeg.exe".to_string()
+}
+
+#[tauri::command]
+async fn ensure_ytdlp() -> Result<TaskResult, String> {
+    // Check if yt-dlp already exists at our managed path
+    let ytdlp_dir = dirs::config_dir()
+        .unwrap_or_default()
+        .join("Formatica")
+        .join("bin");
+    let ytdlp_path = ytdlp_dir.join("yt-dlp.exe");
+
+    if ytdlp_path.exists() {
+        return Ok(TaskResult {
+            success: true,
+            output_path: ytdlp_path.to_string_lossy().to_string(),
+            error_message: "already installed".to_string(),
+        });
+    }
+
+    // Download yt-dlp.exe from official GitHub releases
+    let result = tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&ytdlp_dir).ok();
+        let url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
+        let output = std::process::Command::new("powershell")
+            .args([
+                "-Command",
+                &format!(
+                    "Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
+                    url,
+                    ytdlp_path.to_string_lossy()
+                ),
+            ])
+            .output();
+        match output {
+            Ok(o) if o.status.success() => Ok(ytdlp_path.to_string_lossy().to_string()),
+            Ok(o) => Err(String::from_utf8_lossy(&o.stderr).to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    }).await.map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(path) => Ok(TaskResult { success: true, output_path: path, error_message: String::new() }),
+        Err(e) => Ok(TaskResult { success: false, output_path: String::new(), error_message: e }),
+    }
+}
+
+#[tauri::command]
+async fn open_url(url: String) {
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", &url])
+        .spawn();
 }
 
 #[tauri::command]
@@ -108,7 +171,7 @@ async fn convert_audio(input_path: String, output_format: String, bitrate: Strin
     args.push(output_file.clone());
     
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe").args(&args).output()
+        Command::new(ffmpeg_path()).args(&args).output()
     }).await.unwrap();
     
     match result {
@@ -149,10 +212,10 @@ async fn convert_video(
     if output_format == "gif" {
         return tokio::task::spawn_blocking(move || {
             let palette_file = format!("{}\\palette.png", output_dir_clone);
-            Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+            Command::new(ffmpeg_path())
                 .args(["-i", &input_path_clone, "-vf", "fps=15,scale=480:-1:flags=lanczos,palettegen", "-y", &palette_file])
                 .output().ok();
-            let result = Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+            let result = Command::new(ffmpeg_path())
                 .args(["-i", &input_path_clone, "-i", &palette_file, "-lavfi", "fps=15,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse", "-y", &output_file_clone])
                 .output();
             let _ = std::fs::remove_file(&palette_file);
@@ -175,7 +238,7 @@ async fn convert_video(
     let full_filter = format!("{},{}", scale_filter, color_filter);
 
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+        Command::new(ffmpeg_path())
             .args([
                 "-i", &input_path_clone,
                 "-map_metadata", "0",
@@ -276,7 +339,7 @@ async fn download_media(url: String, output_dir: String, cookies_path: Option<St
         "--no-playlist".to_string(), 
         "--retries".to_string(), "3".to_string(), 
         "--continue".to_string(), 
-        "--ffmpeg-location".to_string(), "C:\\ffmpeg\\bin\\ffmpeg.exe".to_string(),
+        "--ffmpeg-location".to_string(), ffmpeg_path(),
         "-f".to_string(), "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best".to_string(),
         "-o".to_string(), output_template, 
         url.clone()
@@ -284,7 +347,7 @@ async fn download_media(url: String, output_dir: String, cookies_path: Option<St
     if let Some(cookies) = cookies_path { if !cookies.is_empty() { args.push("--cookies".to_string()); args.push(cookies); } }
     
     let result = tokio::task::spawn_blocking(move || {
-        Command::new(get_ytdlp_path()).args(&args).output()
+        Command::new(ytdlp_path()).args(&args).output()
     }).await.unwrap();
     
     match result {
@@ -320,17 +383,17 @@ struct DepStatus {
 
 #[tauri::command]
 fn check_dependencies() -> Vec<DepStatus> {
-    let deps: Vec<(&str, &str)> = vec![
-        ("LibreOffice", "C:\\Program Files\\LibreOffice\\program\\soffice.exe"),
-        ("ffmpeg",      "C:\\ffmpeg\\bin\\ffmpeg.exe"),
-        ("yt-dlp",      "C:\\Program Files\\Python312\\Scripts\\yt-dlp.exe"),
+    let deps: Vec<(&str, String)> = vec![
+        ("LibreOffice", "C:\\Program Files\\LibreOffice\\program\\soffice.exe".to_string()),
+        ("ffmpeg",      ffmpeg_path()),
+        ("yt-dlp",      ytdlp_path()),
     ];
 
     deps.iter().map(|(name, path)| {
         let installed = std::path::Path::new(path).exists();
         DepStatus {
             name: name.to_string(),
-            command: path.to_string(),
+            command: path.clone(),
             installed,
         }
     }).collect()
@@ -408,7 +471,7 @@ async fn compress_video(
     let result = tokio::task::spawn_blocking({
         let args = nvenc_args.clone();
         move || {
-            std::process::Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+            std::process::Command::new(ffmpeg_path())
                 .args(&args)
                 .output()
         }
@@ -447,7 +510,7 @@ async fn compress_video(
             ];
 
             let cpu_result = tokio::task::spawn_blocking(move || {
-                std::process::Command::new("C:\\ffmpeg\\bin\\ffmpeg.exe")
+                std::process::Command::new(ffmpeg_path())
                     .args(&cpu_args)
                     .output()
             }).await.map_err(|e| e.to_string())?;
@@ -578,6 +641,23 @@ async fn greyscale_pdf(input_path: String, output_path: String) -> Result<TaskRe
     }
 }
 
+#[tauri::command]
+fn is_first_run() -> bool {
+    let config_dir = dirs::config_dir()
+        .unwrap_or_default()
+        .join("Formatica");
+    !config_dir.join("initialized").exists()
+}
+
+#[tauri::command]
+fn mark_initialized() {
+    if let Some(config_dir) = dirs::config_dir() {
+        let app_dir = config_dir.join("Formatica");
+        let _ = std::fs::create_dir_all(&app_dir);
+        let _ = std::fs::write(app_dir.join("initialized"), "1");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -596,6 +676,10 @@ pub fn run() {
             merge_pdfs,
             split_pdf,
             greyscale_pdf,
+            is_first_run,
+            mark_initialized,
+            ensure_ytdlp,
+            open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
