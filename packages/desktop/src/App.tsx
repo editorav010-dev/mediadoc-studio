@@ -49,27 +49,40 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
   const [deps, setDeps] = useState<DepStatus[]>([]);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
   const [showLibreOfficePrompt, setShowLibreOfficePrompt] = useState(false);
-
-  useEffect(() => {
-    if (!showOnboarding) {
-      invoke<DepStatus[]>("check_dependencies").then(deps => {
-        setDeps(deps);
-        const lo = deps.find(d => d.name === "LibreOffice");
-        if (lo && !lo.installed) setShowLibreOfficePrompt(true);
-      });
-    }
-  }, [showOnboarding]);
 
   useEffect(() => {
     invoke<boolean>("is_first_run").then(first => {
       if (first) setShowOnboarding(true);
     });
+    // Always check and fix deps silently
+    invoke("get_setup_status").then((status: any) => {
+      if (status.needs_setup && !showOnboarding) {
+        setShowSetup(true);
+      }
+    });
+  }, [showOnboarding]);
+
+  useEffect(() => {
+    // Always ensure yt-dlp exists regardless of onboarding status
+    invoke("ensure_ytdlp").then(() => {
+      // Refresh dependency status after download
+      invoke<DepStatus[]>("check_dependencies").then(setDeps);
+    }).catch(console.error);
   }, []);
 
-  function completeOnboarding() {
-    invoke("mark_initialized");
+  async function completeOnboarding() {
+    await invoke("mark_initialized");
     setShowOnboarding(false);
+    // Check if setup needed after onboarding
+    const status: any = await invoke("get_setup_status");
+    if (status.needs_setup) setShowSetup(true);
+  }
+
+  function completeSetup() {
+    setShowSetup(false);
+    invoke<DepStatus[]>("check_dependencies").then(setDeps);
   }
 
   useEffect(() => {
@@ -86,6 +99,7 @@ export default function App() {
   return (
     <div className={`app theme-${theme}`}>
       {showOnboarding && <OnboardingScreen onComplete={completeOnboarding} />}
+      {!showOnboarding && showSetup && <SetupScreen onComplete={completeSetup} />}
       {/* Header */}
       <header className="app-header">
         <div className="header-left">
@@ -105,13 +119,35 @@ export default function App() {
       {/* Dependency Ribbon */}
       <div className="dep-ribbon">
         <div className={`dep-dot ${allOk ? "" : "missing"}`} />
-        <span className="dep-ribbon-label">{allOk ? "All dependencies healthy" : "Some dependencies missing (or running in web mode)"}</span>
+        <span className="dep-ribbon-label">{allOk ? "All dependencies healthy" : "Some dependencies missing"}</span>
         {deps.map(d => (
           <div className="dep-chip" key={d.name}>
             <div className={`dep-chip-dot ${d.installed ? "ok" : "miss"}`} />
             {d.name}
           </div>
         ))}
+        {!allOk && (
+          <button
+            onClick={async () => {
+              await invoke("ensure_ytdlp");
+              const updated = await invoke<DepStatus[]>("check_dependencies");
+              setDeps(updated);
+            }}
+            style={{
+              marginLeft: "auto",
+              background: "rgba(79,107,244,0.15)",
+              border: "1px solid rgba(79,107,244,0.3)",
+              borderRadius: "6px",
+              padding: "3px 10px",
+              fontSize: "11px",
+              color: "var(--accent)",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              whiteSpace: "nowrap"
+            }}>
+            ⚡ Fix Now
+          </button>
+        )}
       </div>
 
       {/* Content */}
@@ -128,6 +164,9 @@ export default function App() {
         {screen === "splitpdf"    && <SplitPDFScreen    onBack={() => setScreen("home")} />}
         {screen === "greyscalepdf"&& <GreyscalePDFScreen onBack={() => setScreen("home")} />}
       </div>
+
+      {showOnboarding && <OnboardingScreen onComplete={completeOnboarding} />}
+      {!showOnboarding && showSetup && <SetupScreen onComplete={completeSetup} />}
 
       {showLibreOfficePrompt && (
         <div style={{
@@ -1091,18 +1130,6 @@ function GreyscalePDFScreen({ onBack }: { onBack: () => void }) {
 
 function OnboardingScreen({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState(1);
-  const [downloading, setDownloading] = useState(false);
-
-  async function handleComplete() {
-    setDownloading(true);
-    try {
-      await invoke("ensure_ytdlp");
-    } catch(e) {
-      console.log("yt-dlp download failed, will retry on use:", e);
-    }
-    setDownloading(false);
-    onComplete();
-  }
   const steps = [
     {
       icon: "🛡️",
@@ -1145,17 +1172,164 @@ function OnboardingScreen({ onComplete }: { onComplete: () => void }) {
         ))}
       </div>
       <button className="btn-primary" style={{width:"200px", padding:"13px"}}
-        onClick={() => step < 3 ? setStep(s => s+1) : handleComplete()}
-        disabled={downloading}>
-        {downloading ? "Setting up..." : step < 3 ? "Next →" : "Get Started"}
+        onClick={() => step < 3 ? setStep(s => s+1) : onComplete()}>
+        {step < 3 ? "Next →" : "Get Started"}
       </button>
-      {downloading && (
-        <div style={{fontSize:"12px", color:"var(--text-muted)", marginTop:"8px"}}>
-          Downloading yt-dlp for media downloads...
-        </div>
-      )}
       {step > 1 && (
         <button className="back-btn" onClick={() => setStep(s => s-1)}>← Back</button>
+      )}
+    </div>
+  );
+}
+
+function SetupScreen({ onComplete }: { onComplete: () => void }) {
+  const [steps, setSteps] = useState([
+    { id: "ytdlp",       label: "Media Downloader",   subtitle: "yt-dlp",       status: "waiting" as "waiting"|"active"|"done"|"error", percent: 0 },
+    { id: "libreoffice", label: "Document Engine",     subtitle: "LibreOffice",  status: "waiting" as "waiting"|"active"|"done"|"error", percent: 0 },
+  ]);
+  const [currentMsg, setCurrentMsg] = useState("Preparing Formatica...");
+  const [allDone, setAllDone] = useState(false);
+  const [hasError, setHasError] = useState(false);
+
+  function updateStep(id: string, patch: any) {
+    setSteps(prev => prev.map(s => s.id === id ? { ...s, ...patch } : s));
+  }
+
+  useEffect(() => {
+    // Listen for progress events from Rust
+    const unlisten = listen("setup_progress", (event: any) => {
+      const { step, status, message, percent } = event.payload;
+      setCurrentMsg(message);
+      if (step === "libreoffice") {
+        updateStep("libreoffice", {
+          status: status === "done" ? "done" : status === "downloading" || status === "installing" ? "active" : "error",
+          percent
+        });
+      }
+      if (step === "ytdlp") {
+        updateStep("ytdlp", {
+          status: status === "done" ? "done" : "active",
+          percent
+        });
+      }
+    });
+
+    async function runSetup() {
+      // Step 1: yt-dlp
+      updateStep("ytdlp", { status: "active", percent: 0 });
+      setCurrentMsg("Downloading media downloader...");
+      try {
+        await invoke("install_ytdlp");
+        updateStep("ytdlp", { status: "done", percent: 100 });
+      } catch(e) {
+        updateStep("ytdlp", { status: "error", percent: 0 });
+        setHasError(true);
+      }
+
+      // Step 2: LibreOffice
+      updateStep("libreoffice", { status: "active", percent: 0 });
+      setCurrentMsg("Downloading document engine (this may take a few minutes)...");
+      try {
+        const r2: any = await invoke("install_libreoffice");
+        if (r2.success) {
+          updateStep("libreoffice", { status: "done", percent: 100 });
+        } else {
+          updateStep("libreoffice", { status: "error", percent: 0 });
+          setHasError(true);
+        }
+      } catch(e) {
+        updateStep("libreoffice", { status: "error", percent: 0 });
+        setHasError(true);
+      }
+
+      setAllDone(true);
+      setCurrentMsg(hasError ? "Setup completed with some issues." : "Formatica is ready!");
+    }
+
+    runSetup();
+    return () => { unlisten.then(f => f()); };
+  }, []);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0,
+      background: "var(--bg-base)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 1000, flexDirection: "column", gap: "0", padding: "40px"
+    }}>
+      {/* Logo */}
+      <div style={{
+        width: "64px", height: "64px",
+        background: "linear-gradient(135deg, #4F6BF4, #7c3aed)",
+        borderRadius: "16px",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: "28px", fontWeight: "800", color: "white",
+        marginBottom: "24px",
+        boxShadow: "0 8px 32px rgba(79,107,244,0.3)"
+      }}>F</div>
+
+      <div style={{ fontSize: "22px", fontWeight: "700", color: "var(--text-primary)", marginBottom: "8px" }}>
+        Setting up Formatica
+      </div>
+      <div style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "40px", textAlign: "center" }}>
+        This only happens once. Please keep the app open.
+      </div>
+
+      {/* Step cards */}
+      <div style={{ width: "100%", maxWidth: "380px", display: "flex", flexDirection: "column", gap: "12px", marginBottom: "32px" }}>
+        {steps.map(step => (
+          <div key={step.id} style={{
+            background: "var(--bg-card)",
+            border: `1px solid ${step.status === "active" ? "rgba(79,107,244,0.4)" : step.status === "done" ? "rgba(16,185,129,0.3)" : step.status === "error" ? "rgba(239,68,68,0.3)" : "var(--border)"}`,
+            borderRadius: "12px",
+            padding: "14px 16px",
+            transition: "all 0.3s ease"
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: step.status === "active" ? "10px" : "0" }}>
+              <div>
+                <div style={{ fontSize: "13px", fontWeight: "600", color: "var(--text-primary)" }}>{step.label}</div>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{step.subtitle}</div>
+              </div>
+              <div style={{ fontSize: "18px" }}>
+                {step.status === "waiting" && "⏳"}
+                {step.status === "active"  && "⚡"}
+                {step.status === "done"    && "✅"}
+                {step.status === "error"   && "⚠️"}
+              </div>
+            </div>
+            {step.status === "active" && (
+              <div style={{ height: "3px", background: "var(--border)", borderRadius: "2px", overflow: "hidden" }}>
+                <div style={{
+                  height: "100%",
+                  background: "linear-gradient(90deg, #4F6BF4, #7c3aed)",
+                  borderRadius: "2px",
+                  boxShadow: "0 0 8px rgba(79,107,244,0.5)",
+                  animation: "indeterminate 1.4s ease infinite",
+                  width: "40%"
+                }} />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Current message */}
+      <div style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "24px", textAlign: "center", minHeight: "20px" }}>
+        {currentMsg}
+      </div>
+
+      {/* Done button */}
+      {allDone && (
+        <button className="btn-primary" style={{ width: "200px", padding: "13px", animation: "fadeUp 0.4s ease both" }}
+          onClick={onComplete}>
+          {hasError ? "Continue Anyway →" : "Launch Formatica →"}
+        </button>
+      )}
+
+      {allDone && hasError && (
+        <div style={{ marginTop: "12px", fontSize: "11px", color: "var(--text-muted)", textAlign: "center", maxWidth: "340px" }}>
+          Some components couldn't install automatically. You can retry later using the ⚡ Fix Now button in the app.
+        </div>
       )}
     </div>
   );

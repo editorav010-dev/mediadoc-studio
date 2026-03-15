@@ -1,5 +1,12 @@
 use std::process::Command;
+use tauri::Emitter;
 use serde::{Deserialize, Serialize};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Serialize, Deserialize)]
 pub struct TaskResult {
@@ -61,6 +68,7 @@ async fn ensure_ytdlp() -> Result<TaskResult, String> {
         let url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
         let output = std::process::Command::new("powershell")
             .args([
+                "-WindowStyle", "Hidden",
                 "-Command",
                 &format!(
                     "Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
@@ -68,6 +76,7 @@ async fn ensure_ytdlp() -> Result<TaskResult, String> {
                     ytdlp_path.to_string_lossy()
                 ),
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
         match output {
             Ok(o) if o.status.success() => Ok(ytdlp_path.to_string_lossy().to_string()),
@@ -86,7 +95,158 @@ async fn ensure_ytdlp() -> Result<TaskResult, String> {
 async fn open_url(url: String) {
     let _ = std::process::Command::new("cmd")
         .args(["/c", "start", &url])
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn();
+}
+
+#[tauri::command]
+async fn get_setup_status() -> Result<serde_json::Value, String> {
+    let libreoffice_installed = std::path::Path::new(
+        "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
+    ).exists();
+    
+    let ytdlp_installed = std::path::Path::new(&ytdlp_path()).exists();
+    
+    Ok(serde_json::json!({
+        "libreoffice": libreoffice_installed,
+        "ytdlp": ytdlp_installed,
+        "needs_setup": !libreoffice_installed || !ytdlp_installed
+    }))
+}
+
+#[tauri::command]
+async fn install_libreoffice(window: tauri::Window) -> Result<TaskResult, String> {
+    let result = tokio::task::spawn_blocking(move || {
+        // Download LibreOffice installer
+        let temp_dir = std::env::temp_dir().join("formatica_setup");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let installer_path = temp_dir.join("LibreOfficeInstaller.msi");
+        
+        // Emit progress event
+        let _ = window.emit("setup_progress", serde_json::json!({
+            "step": "libreoffice",
+            "status": "downloading",
+            "message": "Downloading document engine (LibreOffice)...",
+            "percent": 10
+        }));
+
+        // Download using PowerShell with progress
+        let download = std::process::Command::new("powershell")
+            .args([
+                "-WindowStyle", "Hidden",
+                "-Command",
+                &format!(
+                    "$url = 'https://download.documentfoundation.org/libreoffice/stable/24.8.4/win/x86_64/LibreOffice_24.8.4_Win_x86-64.msi'; \
+                     $out = '{}'; \
+                     $wc = New-Object System.Net.WebClient; \
+                     $wc.DownloadFile($url, $out); \
+                     Write-Output 'downloaded'",
+                    installer_path.to_string_lossy()
+                ),
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        match download {
+            Ok(o) if o.status.success() => {
+                let _ = window.emit("setup_progress", serde_json::json!({
+                    "step": "libreoffice",
+                    "status": "installing",
+                    "message": "Installing document engine...",
+                    "percent": 60
+                }));
+
+                // Silent install
+                let install = std::process::Command::new("msiexec")
+                    .args([
+                        "/i", &installer_path.to_string_lossy(),
+                        "/quiet", "/norestart",
+                        "ALLUSERS=2",
+                        "MSIINSTALLPERUSER=1"
+                    ])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+
+                // Cleanup
+                let _ = std::fs::remove_file(&installer_path);
+
+                match install {
+                    Ok(i) if i.status.success() => {
+                        let _ = window.emit("setup_progress", serde_json::json!({
+                            "step": "libreoffice",
+                            "status": "done",
+                            "message": "Document engine installed!",
+                            "percent": 100
+                        }));
+                        Ok("installed".to_string())
+                    }
+                    Ok(i) => Err(String::from_utf8_lossy(&i.stderr).to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            Ok(o) => Err(String::from_utf8_lossy(&o.stderr).to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    }).await.map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(_) => Ok(TaskResult { success: true, output_path: String::new(), error_message: String::new() }),
+        Err(e) => Ok(TaskResult { success: false, output_path: String::new(), error_message: e }),
+    }
+}
+
+#[tauri::command]
+async fn install_ytdlp(window: tauri::Window) -> Result<TaskResult, String> {
+    let ytdlp_dir = dirs::config_dir()
+        .unwrap_or_default()
+        .join("Formatica")
+        .join("bin");
+    let ytdlp_path = ytdlp_dir.join("yt-dlp.exe");
+
+    if ytdlp_path.exists() {
+        return Ok(TaskResult { success: true, output_path: ytdlp_path.to_string_lossy().to_string(), error_message: "already installed".to_string() });
+    }
+
+    let result = tokio::task::spawn_blocking(move || {
+        let _ = std::fs::create_dir_all(&ytdlp_dir);
+        let _ = window.emit("setup_progress", serde_json::json!({
+            "step": "ytdlp",
+            "status": "downloading",
+            "message": "Downloading media downloader (yt-dlp)...",
+            "percent": 10
+        }));
+
+        let output = std::process::Command::new("powershell")
+            .args([
+                "-WindowStyle", "Hidden",
+                "-Command",
+                &format!(
+                    "Invoke-WebRequest -Uri 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe' -OutFile '{}' -UseBasicParsing",
+                    ytdlp_path.to_string_lossy()
+                ),
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                let _ = window.emit("setup_progress", serde_json::json!({
+                    "step": "ytdlp",
+                    "status": "done",
+                    "message": "Media downloader ready!",
+                    "percent": 100
+                }));
+                Ok(ytdlp_path.to_string_lossy().to_string())
+            }
+            Ok(o) => Err(String::from_utf8_lossy(&o.stderr).to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    }).await.map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(path) => Ok(TaskResult { success: true, output_path: path, error_message: String::new() }),
+        Err(e) => Ok(TaskResult { success: false, output_path: String::new(), error_message: e }),
+    }
 }
 
 #[tauri::command]
@@ -121,6 +281,7 @@ async fn convert_document(input_path: String, output_format: String, output_dir:
     let result = tokio::task::spawn_blocking(move || {
         Command::new("C:\\Program Files\\LibreOffice\\program\\soffice.exe")
             .args(["--headless", "--convert-to", &convert_arg_owned, "--outdir", &output_dir_clone, &input_path_clone])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
     }).await.unwrap();
 
@@ -171,7 +332,10 @@ async fn convert_audio(input_path: String, output_format: String, bitrate: Strin
     args.push(output_file.clone());
     
     let result = tokio::task::spawn_blocking(move || {
-        Command::new(ffmpeg_path()).args(&args).output()
+        Command::new(ffmpeg_path())
+            .args(&args)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
     }).await.unwrap();
     
     match result {
@@ -214,9 +378,11 @@ async fn convert_video(
             let palette_file = format!("{}\\palette.png", output_dir_clone);
             Command::new(ffmpeg_path())
                 .args(["-i", &input_path_clone, "-vf", "fps=15,scale=480:-1:flags=lanczos,palettegen", "-y", &palette_file])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output().ok();
             let result = Command::new(ffmpeg_path())
                 .args(["-i", &input_path_clone, "-i", &palette_file, "-lavfi", "fps=15,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse", "-y", &output_file_clone])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output();
             let _ = std::fs::remove_file(&palette_file);
             match result {
@@ -260,6 +426,7 @@ async fn convert_video(
                 "-y",
                 &output_file_clone,
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
     }).await.unwrap();
 
@@ -318,7 +485,10 @@ print(out)
     output_format, output_format);
 
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("python").args(["-c", &script]).output()
+        Command::new("python")
+            .args(["-c", &script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
     }).await.unwrap();
     
     match result {
@@ -347,7 +517,10 @@ async fn download_media(url: String, output_dir: String, cookies_path: Option<St
     if let Some(cookies) = cookies_path { if !cookies.is_empty() { args.push("--cookies".to_string()); args.push(cookies); } }
     
     let result = tokio::task::spawn_blocking(move || {
-        Command::new(ytdlp_path()).args(&args).output()
+        Command::new(ytdlp_path())
+            .args(&args)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
     }).await.unwrap();
     
     match result {
@@ -364,7 +537,10 @@ async fn images_to_pdf(image_paths: Vec<String>, output_path: String) -> TaskRes
     let script = format!("from PIL import Image; imgs=[Image.open(p).convert('RGB') for p in [{}]]; imgs[0].save(r'{}',save_all=True,append_images=imgs[1:])", paths_str, output_path.replace("\\", "\\\\"));
     
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("python").args(["-c", &script]).output()
+        Command::new("python")
+            .args(["-c", &script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
     }).await.unwrap();
     
     match result {
@@ -383,14 +559,17 @@ struct DepStatus {
 
 #[tauri::command]
 fn check_dependencies() -> Vec<DepStatus> {
+    let ytdlp = ytdlp_path();
+    let ffmpeg = ffmpeg_path();
+
     let deps: Vec<(&str, String)> = vec![
         ("LibreOffice", "C:\\Program Files\\LibreOffice\\program\\soffice.exe".to_string()),
-        ("ffmpeg",      ffmpeg_path()),
-        ("yt-dlp",      ytdlp_path()),
+        ("ffmpeg", ffmpeg),
+        ("yt-dlp", ytdlp),
     ];
 
     deps.iter().map(|(name, path)| {
-        let installed = std::path::Path::new(path).exists();
+        let installed = std::path::Path::new(path.as_str()).exists();
         DepStatus {
             name: name.to_string(),
             command: path.clone(),
@@ -473,6 +652,7 @@ async fn compress_video(
         move || {
             std::process::Command::new(ffmpeg_path())
                 .args(&args)
+                .creation_flags(CREATE_NO_WINDOW)
                 .output()
         }
     }).await.map_err(|e| e.to_string())?;
@@ -512,6 +692,7 @@ async fn compress_video(
             let cpu_result = tokio::task::spawn_blocking(move || {
                 std::process::Command::new(ffmpeg_path())
                     .args(&cpu_args)
+                    .creation_flags(CREATE_NO_WINDOW)
                     .output()
             }).await.map_err(|e| e.to_string())?;
 
@@ -549,6 +730,7 @@ async fn merge_pdfs(input_paths: Vec<String>, output_path: String) -> Result<Tas
                     input_paths, output_path
                 ),
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
     }).await.map_err(|e| e.to_string())?;
 
@@ -586,6 +768,7 @@ async fn split_pdf(
                     input_path, output_dir, mode, value
                 ),
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
     }).await.map_err(|e| e.to_string())?;
 
@@ -620,6 +803,7 @@ async fn greyscale_pdf(input_path: String, output_path: String) -> Result<TaskRe
                     input_path, output_path
                 ),
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
     }).await.map_err(|e| e.to_string())?;
 
@@ -650,7 +834,7 @@ fn is_first_run() -> bool {
 }
 
 #[tauri::command]
-fn mark_initialized() {
+async fn mark_initialized() {
     if let Some(config_dir) = dirs::config_dir() {
         let app_dir = config_dir.join("Formatica");
         let _ = std::fs::create_dir_all(&app_dir);
@@ -680,6 +864,9 @@ pub fn run() {
             mark_initialized,
             ensure_ytdlp,
             open_url,
+            get_setup_status,
+            install_libreoffice,
+            install_ytdlp,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

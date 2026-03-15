@@ -12,6 +12,7 @@
     "dialog:allow-open",
     "fs:default",
     "core:window:allow-start-dragging",
+    "core:event:default",
     {
       "identifier": "shell:allow-execute",
       "allow": [
