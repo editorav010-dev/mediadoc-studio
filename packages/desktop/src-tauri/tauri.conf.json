@@ -35,9 +35,6 @@
     "publisher": "Formatica",
     "copyright": "© 2026 Formatica",
     "shortDescription": "Convert, download, and extract — privately.",
-    "resources": {
-      "C:\\ffmpeg\\bin\\ffmpeg.exe": "ffmpeg/ffmpeg.exe"
-    },
     "windows": {
       "nsis": {
         "installMode": "currentUser"
