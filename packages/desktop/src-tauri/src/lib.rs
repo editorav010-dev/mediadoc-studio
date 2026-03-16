@@ -5,8 +5,18 @@ use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+// Cross-platform helper — applies CREATE_NO_WINDOW on Windows, does nothing on Mac/Linux
+trait CommandExt2 {
+    fn hide_window(&mut self) -> &mut Self;
+}
+
+impl CommandExt2 for Command {
+    fn hide_window(&mut self) -> &mut Self {
+        #[cfg(windows)]
+        self.creation_flags(0x08000000);
+        self
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct TaskResult {
@@ -76,7 +86,7 @@ async fn ensure_ytdlp() -> Result<TaskResult, String> {
                     ytdlp_path.to_string_lossy()
                 ),
             ])
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output();
         match output {
             Ok(o) if o.status.success() => Ok(ytdlp_path.to_string_lossy().to_string()),
@@ -95,7 +105,7 @@ async fn ensure_ytdlp() -> Result<TaskResult, String> {
 async fn open_url(url: String) {
     let _ = std::process::Command::new("cmd")
         .args(["/c", "start", &url])
-        .creation_flags(CREATE_NO_WINDOW)
+        .hide_window()
         .spawn();
 }
 
@@ -144,7 +154,7 @@ async fn install_libreoffice(window: tauri::Window) -> Result<TaskResult, String
                     installer_path.to_string_lossy()
                 ),
             ])
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output();
 
         match download {
@@ -164,7 +174,7 @@ async fn install_libreoffice(window: tauri::Window) -> Result<TaskResult, String
                         "ALLUSERS=2",
                         "MSIINSTALLPERUSER=1"
                     ])
-                    .creation_flags(CREATE_NO_WINDOW)
+                    .hide_window()
                     .output();
 
                 // Cleanup
@@ -225,7 +235,7 @@ async fn install_ytdlp(window: tauri::Window) -> Result<TaskResult, String> {
                     ytdlp_path.to_string_lossy()
                 ),
             ])
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output();
 
         match output {
@@ -281,7 +291,7 @@ async fn convert_document(input_path: String, output_format: String, output_dir:
     let result = tokio::task::spawn_blocking(move || {
         Command::new("C:\\Program Files\\LibreOffice\\program\\soffice.exe")
             .args(["--headless", "--convert-to", &convert_arg_owned, "--outdir", &output_dir_clone, &input_path_clone])
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output()
     }).await.unwrap();
 
@@ -334,7 +344,7 @@ async fn convert_audio(input_path: String, output_format: String, bitrate: Strin
     let result = tokio::task::spawn_blocking(move || {
         Command::new(ffmpeg_path())
             .args(&args)
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output()
     }).await.unwrap();
     
@@ -378,11 +388,11 @@ async fn convert_video(
             let palette_file = format!("{}\\palette.png", output_dir_clone);
             Command::new(ffmpeg_path())
                 .args(["-i", &input_path_clone, "-vf", "fps=15,scale=480:-1:flags=lanczos,palettegen", "-y", &palette_file])
-                .creation_flags(CREATE_NO_WINDOW)
+                .hide_window()
                 .output().ok();
             let result = Command::new(ffmpeg_path())
                 .args(["-i", &input_path_clone, "-i", &palette_file, "-lavfi", "fps=15,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse", "-y", &output_file_clone])
-                .creation_flags(CREATE_NO_WINDOW)
+                .hide_window()
                 .output();
             let _ = std::fs::remove_file(&palette_file);
             match result {
@@ -426,7 +436,7 @@ async fn convert_video(
                 "-y",
                 &output_file_clone,
             ])
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output()
     }).await.unwrap();
 
@@ -487,7 +497,7 @@ print(out)
     let result = tokio::task::spawn_blocking(move || {
         Command::new("python")
             .args(["-c", &script])
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output()
     }).await.unwrap();
     
@@ -519,7 +529,7 @@ async fn download_media(url: String, output_dir: String, cookies_path: Option<St
     let result = tokio::task::spawn_blocking(move || {
         Command::new(ytdlp_path())
             .args(&args)
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output()
     }).await.unwrap();
     
@@ -539,7 +549,7 @@ async fn images_to_pdf(image_paths: Vec<String>, output_path: String) -> TaskRes
     let result = tokio::task::spawn_blocking(move || {
         Command::new("python")
             .args(["-c", &script])
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output()
     }).await.unwrap();
     
@@ -652,7 +662,7 @@ async fn compress_video(
         move || {
             std::process::Command::new(ffmpeg_path())
                 .args(&args)
-                .creation_flags(CREATE_NO_WINDOW)
+                .hide_window()
                 .output()
         }
     }).await.map_err(|e| e.to_string())?;
@@ -692,7 +702,7 @@ async fn compress_video(
             let cpu_result = tokio::task::spawn_blocking(move || {
                 std::process::Command::new(ffmpeg_path())
                     .args(&cpu_args)
-                    .creation_flags(CREATE_NO_WINDOW)
+                    .hide_window()
                     .output()
             }).await.map_err(|e| e.to_string())?;
 
@@ -730,7 +740,7 @@ async fn merge_pdfs(input_paths: Vec<String>, output_path: String) -> Result<Tas
                     input_paths, output_path
                 ),
             ])
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output()
     }).await.map_err(|e| e.to_string())?;
 
@@ -768,7 +778,7 @@ async fn split_pdf(
                     input_path, output_dir, mode, value
                 ),
             ])
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output()
     }).await.map_err(|e| e.to_string())?;
 
@@ -803,7 +813,7 @@ async fn greyscale_pdf(input_path: String, output_path: String) -> Result<TaskRe
                     input_path, output_path
                 ),
             ])
-            .creation_flags(CREATE_NO_WINDOW)
+            .hide_window()
             .output()
     }).await.map_err(|e| e.to_string())?;
 
