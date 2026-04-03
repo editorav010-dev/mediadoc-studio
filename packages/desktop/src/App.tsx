@@ -4,9 +4,6 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import { Layout } from "./components/Layout";
-import { OCRScreen } from "./components/Tools/OCR";
-import { WatermarkScreen } from "./components/Tools/Watermark";
-import { BatchFolderScreen } from "./components/Tools/BatchFolder";
 
 type Theme = "dark" | "light";
 type Screen = "home" | "document" | "audio" | "download" | "image" | "video" | "imageconvert" | "compress" | "mergepdf" | "splitpdf" | "greyscalepdf" | "ocr" | "watermark" | "batchfolder" | "onboarding";
@@ -127,9 +124,10 @@ export default function App() {
         {screen === "mergepdf" && <MergePDFScreen onBack={() => setScreen("home")} />}
         {screen === "splitpdf" && <SplitPDFScreen onBack={() => setScreen("home")} />}
         {screen === "greyscalepdf" && <GreyscalePDFScreen onBack={() => setScreen("home")} />}
-        {screen === "ocr" && <OCRScreen onBack={() => setScreen("home")} />}
-        {screen === "watermark" && <WatermarkScreen onBack={() => setScreen("home")} />}
-        {screen === "batchfolder" && <BatchFolderScreen onBack={() => setScreen("home")} />}
+        {/* Phase 2 tools - backend commands coming soon */}
+        {/* {screen === "ocr" && <OCRScreen onBack={() => setScreen("home")} />} */}
+        {/* {screen === "watermark" && <WatermarkScreen onBack={() => setScreen("home")} />} */}
+        {/* {screen === "batchfolder" && <BatchFolderScreen onBack={() => setScreen("home")} />} */}
       </div>
 
       {showLibreOfficePrompt && (
@@ -279,7 +277,7 @@ function DocumentScreen({ onBack }: { onBack: () => void }) {
   }, []);
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="screen-title">Convert Document</div>
       <div className="screen-sub">Locally processed — no cloud upload</div>
@@ -380,7 +378,7 @@ function AudioScreen({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="screen-title">Extract Audio</div>
       <div className="screen-sub">MP3 · AAC · WAV from any video file</div>
@@ -442,7 +440,7 @@ function DownloadScreen({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="screen-title">Download Media</div>
       <div className="form">
@@ -511,7 +509,7 @@ function ImageScreen({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="screen-title">Images to PDF</div>
       <div className="screen-sub">Combine multiple images into a single PDF</div>
@@ -585,7 +583,7 @@ function VideoScreen({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="screen-title">Convert Video</div>
       <div className="screen-sub">Change format — preserves quality and aspect ratio</div>
@@ -680,7 +678,7 @@ function CompressVideoScreen({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="screen-title">Compress Video</div>
       <div className="screen-sub">Resize · re-encode · reduce file size</div>
@@ -806,7 +804,7 @@ function ImageConvertScreen({ onBack }: { onBack: () => void }) {
   const qualityLabel = qualityNum >= 90 ? "Lossless" : qualityNum >= 75 ? "Good" : qualityNum >= 60 ? "Balanced" : "Small File";
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="screen-title">Convert Image</div>
       <div className="screen-sub">JPG · PNG · WEBP · GIF · BMP · TIFF</div>
@@ -900,7 +898,7 @@ function MergePDFScreen({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="screen-title">Merge PDF</div>
       <div className="screen-sub">Combine multiple PDF files into one ordered document</div>
@@ -980,7 +978,7 @@ function SplitPDFScreen({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="screen-title">Split PDF</div>
       <div className="screen-sub">Break a PDF into smaller files by page count or custom ranges</div>
@@ -1067,7 +1065,7 @@ function GreyscalePDFScreen({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="screen-title">Greyscale PDF</div>
       <div className="screen-sub">Convert a colour PDF to greyscale — ideal for printing cost reduction</div>

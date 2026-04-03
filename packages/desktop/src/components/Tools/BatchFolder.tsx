@@ -86,7 +86,7 @@ export function BatchFolderScreen({ onBack }: BatchFolderProps) {
   const folderName = folderPath.split("\\").pop() || "";
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="pt">Batch folder</div>
       <div className="ps">Select a folder — Formatica scans and converts everything</div>

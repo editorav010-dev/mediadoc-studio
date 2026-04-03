@@ -7,14 +7,14 @@ interface SidebarProps {
 const toolSections = [
   {
     name: "PDF",
-    count: 5,
+    count: 4,
     badge: "nb-r",
     tools: [
       { id: "document", label: "Convert doc", icon: "📄", kbd: "Ctrl+1" },
       { id: "image", label: "Images to PDF", icon: "🖼", kbd: "Ctrl+2" },
       { id: "mergepdf", label: "Merge PDF", icon: "🔗", kbd: "Ctrl+3" },
       { id: "splitpdf", label: "Split PDF", icon: "✂️", kbd: "Ctrl+4" },
-      { id: "ocr", label: "OCR PDF", icon: "🔍", kbd: "Ctrl+5" },
+      // { id: "ocr", label: "OCR PDF", icon: "🔍", kbd: "Ctrl+5" }, // Phase 2 - backend pending
     ],
   },
   {
@@ -28,25 +28,25 @@ const toolSections = [
   },
   {
     name: "Image",
-    count: 2,
+    count: 1,
     badge: "nb-g",
     tools: [
       { id: "imageconvert", label: "Convert image", icon: "🖼", kbd: "Ctrl+7" },
-      { id: "watermark", label: "Watermark", icon: "💧", kbd: "Ctrl+8" },
+      // { id: "watermark", label: "Watermark", icon: "💧", kbd: "Ctrl+8" }, // Phase 2 - backend pending
     ],
   },
   {
     name: "Batch",
-    count: 2,
+    count: 1,
     badge: "nb-p",
     tools: [
       // { id: "queue", label: "Queue", icon: "⚡", kbd: "Ctrl+Q" }, // Phase 3
-      { id: "batchfolder", label: "Batch folder", icon: "📁" },
+      // { id: "batchfolder", label: "Batch folder", icon: "📁" }, // Phase 2 - backend pending
     ],
   },
   {
     name: "System",
-    count: 3,
+    count: 0,
     badge: "nb-p",
     tools: [
       // { id: "shortcuts", label: "Shortcuts", icon: "⌨", kbd: "Ctrl+/" }, // Phase 3

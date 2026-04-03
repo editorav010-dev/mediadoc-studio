@@ -87,7 +87,7 @@ export function OCRScreen({ onBack }: OCRProps) {
   const fileName = inputFile.split("\\").pop() || "";
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="pt">OCR — PDF to searchable text</div>
       <div className="ps">Convert scanned PDFs into searchable, selectable, copyable text</div>

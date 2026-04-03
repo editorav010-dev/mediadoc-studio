@@ -91,7 +91,7 @@ export function WatermarkScreen({ onBack }: WatermarkProps) {
   const fileName = inputFile.split("\\").pop() || "";
 
   return (
-    <div className="screen">
+    <div>
       <button className="back-btn" onClick={onBack}>← Back</button>
       <div className="pt">Watermark & branding</div>
       <div className="ps">Add text or logo watermarks to images and videos</div>
