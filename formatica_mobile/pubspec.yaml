@@ -1,0 +1,51 @@
+name: formatica_mobile
+description: Formatica — File conversion and media utility for Android and iOS.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # HTTP
+  http: ^1.2.1
+  dio: ^5.4.3
+
+  # File picking and saving
+  file_picker: ^8.0.3
+  open_filex: ^4.4.1
+  path_provider: ^2.1.3
+  permission_handler: ^11.3.1
+  path: ^1.9.0
+
+  # On-device audio extraction (Android)
+
+  # Image handling and PDF generation (on-device)
+  image: ^4.1.7
+  pdf: ^3.10.8
+  printing: ^5.12.0
+
+  # State management
+  provider: ^6.1.2
+
+  # UI utilities
+  flutter_svg: ^2.0.10+1
+  lottie: ^3.1.2
+  url_launcher: ^6.2.5
+
+  # Storage
+  shared_preferences: ^2.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/icons/

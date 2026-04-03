@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
+import { Layout } from "./components/Layout";
 
 type Theme = "dark" | "light";
 type Screen = "home" | "document" | "audio" | "download" | "image" | "video" | "imageconvert" | "compress" | "mergepdf" | "splitpdf" | "greyscalepdf" | "onboarding";
@@ -56,7 +57,6 @@ export default function App() {
     invoke<boolean>("is_first_run").then(first => {
       if (first) setShowOnboarding(true);
     });
-    // Always check and fix deps silently
     invoke("get_setup_status").then((status: any) => {
       if (status.needs_setup && !showOnboarding) {
         setShowSetup(true);
@@ -65,9 +65,7 @@ export default function App() {
   }, [showOnboarding]);
 
   useEffect(() => {
-    // Always ensure yt-dlp exists regardless of onboarding status
     invoke("ensure_ytdlp").then(() => {
-      // Refresh dependency status after download
       invoke<DepStatus[]>("check_dependencies").then(setDeps);
     }).catch(console.error);
   }, []);
@@ -75,7 +73,6 @@ export default function App() {
   async function completeOnboarding() {
     await invoke("mark_initialized");
     setShowOnboarding(false);
-    // Check if setup needed after onboarding
     const status: any = await invoke("get_setup_status");
     if (status.needs_setup) setShowSetup(true);
   }
@@ -94,102 +91,67 @@ export default function App() {
   }, []);
 
   const toggleTheme = () => setTheme(t => t === "dark" ? "light" : "dark");
-  const allOk = deps.length > 0 && deps.every(d => d.installed);
+  const handleFixDeps = async () => {
+    await invoke("ensure_ytdlp");
+    invoke<DepStatus[]>("check_dependencies").then(setDeps);
+  };
+
+  if (showOnboarding) return <OnboardingScreen onComplete={completeOnboarding} />;
+  if (showSetup && !showOnboarding) return <SetupScreen onComplete={completeSetup} />;
+
+  const handleNavigate = (screenId: string) => {
+    setScreen(screenId as Screen);
+  };
 
   return (
-    <div className={`app theme-${theme}`}>
-      {showOnboarding && <OnboardingScreen onComplete={completeOnboarding} />}
-      {!showOnboarding && showSetup && <SetupScreen onComplete={completeSetup} />}
-      {/* Header */}
-      <header className="app-header">
-        <div className="header-left">
-          <div className="header-logo">F</div>
-          <div>
-            <div className="header-title">Formatica</div>
-            <div className="header-tagline">Convert, download, and extract — privately.</div>
-          </div>
-        </div>
-        <div className="header-right">
-          <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme">
-            {theme === "dark" ? "☀️" : "🌙"}
-          </button>
-        </div>
-      </header>
-
-      {/* Dependency Ribbon */}
-      <div className="dep-ribbon">
-        <div className={`dep-dot ${allOk ? "" : "missing"}`} />
-        <span className="dep-ribbon-label">{allOk ? "All dependencies healthy" : "Some dependencies missing"}</span>
-        {deps.map(d => (
-          <div className="dep-chip" key={d.name}>
-            <div className={`dep-chip-dot ${d.installed ? "ok" : "miss"}`} />
-            {d.name}
-          </div>
-        ))}
-        {!allOk && (
-          <button
-            onClick={async () => {
-              await invoke("ensure_ytdlp");
-              const updated = await invoke<DepStatus[]>("check_dependencies");
-              setDeps(updated);
-            }}
-            style={{
-              marginLeft: "auto",
-              background: "rgba(79,107,244,0.15)",
-              border: "1px solid rgba(79,107,244,0.3)",
-              borderRadius: "6px",
-              padding: "3px 10px",
-              fontSize: "11px",
-              color: "var(--accent)",
-              cursor: "pointer",
-              fontFamily: "inherit",
-              whiteSpace: "nowrap"
-            }}>
-            ⚡ Fix Now
-          </button>
-        )}
+    <Layout
+      theme={theme}
+      onThemeToggle={toggleTheme}
+      currentScreen={screen}
+      onNavigate={handleNavigate}
+      deps={deps}
+      onFixDeps={handleFixDeps}
+    >
+      <div className="screen active">
+        {screen === "home" && <HomeScreen setScreen={setScreen} />}
+        {screen === "document" && <DocumentScreen onBack={() => setScreen("home")} />}
+        {screen === "audio" && <AudioScreen onBack={() => setScreen("home")} />}
+        {screen === "download" && <DownloadScreen onBack={() => setScreen("home")} />}
+        {screen === "image" && <ImageScreen onBack={() => setScreen("home")} />}
+        {screen === "video" && <VideoScreen onBack={() => setScreen("home")} />}
+        {screen === "imageconvert" && <ImageConvertScreen onBack={() => setScreen("home")} />}
+        {screen === "compress" && <CompressVideoScreen onBack={() => setScreen("home")} />}
+        {screen === "mergepdf" && <MergePDFScreen onBack={() => setScreen("home")} />}
+        {screen === "splitpdf" && <SplitPDFScreen onBack={() => setScreen("home")} />}
+        {screen === "greyscalepdf" && <GreyscalePDFScreen onBack={() => setScreen("home")} />}
       </div>
-
-      {/* Content */}
-      <div className="app-content">
-        {screen === "home"        && <HomeScreen setScreen={setScreen} />}
-        {screen === "document"    && <DocumentScreen    onBack={() => setScreen("home")} />}
-        {screen === "audio"       && <AudioScreen       onBack={() => setScreen("home")} />}
-        {screen === "download"    && <DownloadScreen    onBack={() => setScreen("home")} />}
-        {screen === "image"       && <ImageScreen       onBack={() => setScreen("home")} />}
-        {screen === "video"       && <VideoScreen       onBack={() => setScreen("home")} />}
-        {screen === "imageconvert"&& <ImageConvertScreen onBack={() => setScreen("home")} />}
-        {screen === "compress"    && <CompressVideoScreen onBack={() => setScreen("home")} />}
-        {screen === "mergepdf"    && <MergePDFScreen    onBack={() => setScreen("home")} />}
-        {screen === "splitpdf"    && <SplitPDFScreen    onBack={() => setScreen("home")} />}
-        {screen === "greyscalepdf"&& <GreyscalePDFScreen onBack={() => setScreen("home")} />}
-      </div>
-
-      {showOnboarding && <OnboardingScreen onComplete={completeOnboarding} />}
-      {!showOnboarding && showSetup && <SetupScreen onComplete={completeSetup} />}
 
       {showLibreOfficePrompt && (
         <div style={{
-          position:"fixed", inset:0, background:"rgba(0,0,0,0.7)",
-          display:"flex", alignItems:"center", justifyContent: "center",
-          zIndex:999, padding:"40px"
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 999, padding: "40px"
         }}>
           <div style={{
-            background:"var(--bg-card)", border:"1px solid var(--border)",
-            borderRadius:"16px", padding:"32px", maxWidth:"400px",
-            textAlign:"center"
+            background: "var(--bg-card)", border: "1px solid var(--border)",
+            borderRadius: "16px", padding: "32px", maxWidth: "400px",
+            textAlign: "center"
           }}>
-            <div style={{fontSize:"40px", marginBottom:"16px"}}>📄</div>
-            <div style={{fontSize:"18px", fontWeight:"700", marginBottom:"8px",
-              color:"var(--text-primary)"}}>
+            <div style={{ fontSize: "40px", marginBottom: "16px" }}>📄</div>
+            <div style={{
+              fontSize: "18px", fontWeight: "700", marginBottom: "8px",
+              color: "var(--text-primary)"
+            }}>
               Install LibreOffice for Document Conversion
             </div>
-            <div style={{fontSize:"13px", color:"var(--text-secondary)",
-              marginBottom:"24px", lineHeight:"1.6"}}>
+            <div style={{
+              fontSize: "13px", color: "var(--text-secondary)",
+              marginBottom: "24px", lineHeight: "1.6"
+            }}>
               Document conversion (DOCX, PDF, XLSX etc.) requires LibreOffice.
               It's free and takes about 2 minutes to install.
             </div>
-            <div style={{display:"flex", flexDirection:"column", gap:"10px"}}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               <button className="btn-primary" onClick={() => {
                 invoke("open_url", { url: "https://www.libreoffice.org/download/libreoffice-fresh/" });
                 setShowLibreOfficePrompt(false);
@@ -204,7 +166,7 @@ export default function App() {
           </div>
         </div>
       )}
-    </div>
+    </Layout>
   );
 }
 
