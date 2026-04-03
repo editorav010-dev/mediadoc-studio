@@ -1,0 +1,1 @@
+Formatica document conversion smoke test

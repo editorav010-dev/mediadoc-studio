@@ -4,9 +4,12 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import { Layout } from "./components/Layout";
+import { OCRScreen } from "./components/Tools/OCR";
+import { WatermarkScreen } from "./components/Tools/Watermark";
+import { BatchFolderScreen } from "./components/Tools/BatchFolder";
 
 type Theme = "dark" | "light";
-type Screen = "home" | "document" | "audio" | "download" | "image" | "video" | "imageconvert" | "compress" | "mergepdf" | "splitpdf" | "greyscalepdf" | "onboarding";
+type Screen = "home" | "document" | "audio" | "download" | "image" | "video" | "imageconvert" | "compress" | "mergepdf" | "splitpdf" | "greyscalepdf" | "ocr" | "watermark" | "batchfolder" | "onboarding";
 
 interface TaskResult {
   success: boolean;
@@ -124,6 +127,9 @@ export default function App() {
         {screen === "mergepdf" && <MergePDFScreen onBack={() => setScreen("home")} />}
         {screen === "splitpdf" && <SplitPDFScreen onBack={() => setScreen("home")} />}
         {screen === "greyscalepdf" && <GreyscalePDFScreen onBack={() => setScreen("home")} />}
+        {screen === "ocr" && <OCRScreen onBack={() => setScreen("home")} />}
+        {screen === "watermark" && <WatermarkScreen onBack={() => setScreen("home")} />}
+        {screen === "batchfolder" && <BatchFolderScreen onBack={() => setScreen("home")} />}
       </div>
 
       {showLibreOfficePrompt && (

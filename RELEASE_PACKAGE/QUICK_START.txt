@@ -1,0 +1,52 @@
+# FORMATICA v1.0.0 - QUICK START
+
+## Download & Install in 3 Steps
+
+### 1️⃣ Run Installer
+Double-click: `Formatica_1.0.0_x64-setup.exe`
+
+### 2️⃣ Follow Setup Wizard
+- Accept license
+- Choose install location
+- Click Install
+
+### 3️⃣ Launch App
+- Find Formatica in Start Menu
+- Click to launch
+- App auto-downloads ffmpeg & yt-dlp on first run (2-5 min)
+
+## What You Can Do
+
+✅ Convert documents (Word → PDF, etc.)
+✅ Compress videos (reduce file size)
+✅ Convert video formats (MP4, MKV, etc.)
+✅ Extract audio from videos (MP3, WAV)
+✅ Merge/Split PDF files
+✅ Download videos from YouTube
+✅ Convert images between formats
+✅ Process all files locally (no cloud!)
+
+## System Requirements
+
+- Windows 10+ (64-bit)
+- 4GB RAM minimum
+- 500MB free disk space
+- Internet connection for first setup
+
+## Troubleshooting
+
+**App says "LibreOffice missing"?**
+→ Download it via link in app (free, 300MB)
+
+**ffmpeg/yt-dlp missing?**
+→ Click "⚡ Fix Now" button in app
+
+**Video conversion slow?**
+→ Normal, depends on file size. Close other apps.
+
+**App won't start?**
+→ Restart your computer, then reinstall
+
+---
+
+**For detailed documentation, see README.md**

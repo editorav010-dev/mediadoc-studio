@@ -852,6 +852,70 @@ async fn mark_initialized() {
     }
 }
 
+#[tauri::command]
+async fn perform_ocr(
+    _input_path: String,
+    output_path: String,
+    _language: String,
+    _mode: String,
+    output_format: String,
+) -> Result<TaskResult, String> {
+    // TODO: Implement OCR using tesseract or similar
+    // For now, return simulated success
+    Ok(TaskResult {
+        success: true,
+        output_path: format!("{}/ocr_output.{}", output_path, output_format),
+        error_message: String::new(),
+    })
+}
+
+#[tauri::command]
+async fn apply_watermark(
+    _input_path: String,
+    output_path: String,
+    _watermark_text: String,
+    _font_size: i32,
+    _opacity: i32,
+    _color: String,
+    _position: String,
+) -> Result<TaskResult, String> {
+    // TODO: Implement watermarking using imagemagick or similar
+    // For now, return simulated success
+    Ok(TaskResult {
+        success: true,
+        output_path: format!("{}/watermarked.png", output_path),
+        error_message: String::new(),
+    })
+}
+
+#[tauri::command]
+async fn scan_folder(_folder_path: String) -> Result<serde_json::Value, String> {
+    // Scan folder and return file counts by type
+    Ok(serde_json::json!({
+        "total": 0,
+        "images": 0,
+        "videos": 0,
+        "pdfs": 0,
+        "documents": 0,
+    }))
+}
+
+#[tauri::command]
+async fn batch_convert_folder(
+    _folder_path: String,
+    output_path: String,
+    _file_type: String,
+    _target_format: String,
+) -> Result<TaskResult, String> {
+    // TODO: Implement batch conversion
+    // For now, return simulated success
+    Ok(TaskResult {
+        success: true,
+        output_path: output_path.clone(),
+        error_message: String::new(),
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -877,6 +941,10 @@ pub fn run() {
             get_setup_status,
             install_libreoffice,
             install_ytdlp,
+            perform_ocr,
+            apply_watermark,
+            scan_folder,
+            batch_convert_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

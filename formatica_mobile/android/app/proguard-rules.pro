@@ -1,0 +1,3 @@
+-keep public class com.itextpdf.**
+-keep public class org.apache.**
+-keep class com.antonkarpenko.ffmpegkit.** { *; }
