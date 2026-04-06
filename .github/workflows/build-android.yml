@@ -53,8 +53,13 @@ jobs:
       - name: Flutter version info
         run: flutter doctor -v
 
+      - name: Accept Android licenses
+        run: yes | flutter doctor --android-licenses || true
+
       - name: Get dependencies
-        run: flutter pub get
+        run: |
+          flutter clean
+          flutter pub get
 
       - name: Analyze code
         run: flutter analyze
@@ -65,22 +70,27 @@ jobs:
 
       - name: Build APK (Release - Split per ABI)
         if: github.event.inputs.build_type == 'release' && github.event.inputs.split_per_abi == 'true'
-        run: flutter build apk --release --split-per-abi
+        run: |
+          echo "Building release APK with split per ABI..."
+          flutter build apk --release --split-per-abi --verbose
         env:
-          # Disable memory-heavy features
-          COMPILER_MEMORY_LIMIT: 2048
+          GRADLE_OPTS: "-Xmx2g -XX:MaxMetaspaceSize=1g"
 
       - name: Build APK (Release - Universal)
         if: github.event.inputs.build_type == 'release' && github.event.inputs.split_per_abi != 'true'
-        run: flutter build apk --release --no-tree-shake-icons
+        run: |
+          echo "Building universal release APK..."
+          flutter build apk --release --verbose
         env:
-          COMPILER_MEMORY_LIMIT: 2048
+          GRADLE_OPTS: "-Xmx2g -XX:MaxMetaspaceSize=1g"
 
       - name: Build APK (Debug)
         if: github.event.inputs.build_type == 'debug'
-        run: flutter build apk --debug
+        run: |
+          echo "Building debug APK..."
+          flutter build apk --debug --verbose
         env:
-          COMPILER_MEMORY_LIMIT: 2048
+          GRADLE_OPTS: "-Xmx2g -XX:MaxMetaspaceSize=1g"
 
       - name: Upload APK artifacts (Split ABI)
         if: github.event.inputs.build_type == 'release' && github.event.inputs.split_per_abi == 'true'
