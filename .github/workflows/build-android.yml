@@ -28,9 +28,6 @@ jobs:
   build-android:
     name: Build Android APK
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: formatica_mobile
 
     steps:
       - name: Checkout code
@@ -51,34 +48,46 @@ jobs:
           cache: true
 
       - name: Flutter version info
-        run: flutter doctor -v
+        run: |
+          cd formatica_mobile
+          flutter doctor -v
 
       - name: Accept Android licenses
         run: |
+          cd formatica_mobile
           echo "Accepting Android SDK licenses..."
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
           flutter doctor --android-licenses || true
 
       - name: Get dependencies
         run: |
+          cd formatica_mobile
           echo "Cleaning previous builds..."
           flutter clean
           echo "Getting dependencies..."
           flutter pub get
           echo "Dependencies installed successfully"
+          echo "Current directory: $(pwd)"
+          echo "Files in lib/:"
+          ls -la lib/
 
       - name: Analyze code
-        run: flutter analyze
+        run: |
+          cd formatica_mobile
+          flutter analyze
         continue-on-error: true
-        working-directory: formatica_mobile
 
       # Note: Flutter tests are optional for APK build - we focus on successful compilation
 
       - name: Build APK (Release - Split per ABI)
         if: github.event.inputs.build_type == 'release' && github.event.inputs.split_per_abi == 'true'
         run: |
+          cd formatica_mobile
           echo "=========================================="
           echo "Building release APK with split per ABI..."
+          echo "Current directory: $(pwd)"
+          echo "Checking for lib/main.dart..."
+          ls -la lib/main.dart
           echo "=========================================="
           flutter build apk --release --split-per-abi --verbose 2>&1 | tee build.log
           echo "Build completed. Checking for APKs..."
@@ -91,8 +100,10 @@ jobs:
       - name: Build APK (Release - Universal)
         if: github.event.inputs.build_type == 'release' && github.event.inputs.split_per_abi != 'true'
         run: |
+          cd formatica_mobile
           echo "=========================================="
           echo "Building universal release APK..."
+          echo "Current directory: $(pwd)"
           echo "=========================================="
           flutter build apk --release --verbose 2>&1 | tee build.log
           echo "Build completed. Checking for APKs..."
@@ -105,8 +116,10 @@ jobs:
       - name: Build APK (Debug)
         if: github.event.inputs.build_type == 'debug'
         run: |
+          cd formatica_mobile
           echo "=========================================="
           echo "Building debug APK..."
+          echo "Current directory: $(pwd)"
           echo "=========================================="
           flutter build apk --debug --verbose 2>&1 | tee build.log
           echo "Build completed. Checking for APKs..."
@@ -136,7 +149,7 @@ jobs:
             formatica_mobile/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             formatica_mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             formatica_mobile/build/app/outputs/flutter-apk/app-x86_64-release.apk
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
 
       - name: Upload APK artifact (Universal Release)
@@ -145,7 +158,7 @@ jobs:
         with:
           name: Formatica-Android-Universal-Release
           path: formatica_mobile/build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
 
       - name: Upload APK artifact (Debug)
@@ -154,7 +167,7 @@ jobs:
         with:
           name: Formatica-Android-Debug
           path: formatica_mobile/build/app/outputs/flutter-apk/app-debug.apk
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
       - name: Create Release (on tag push)
@@ -170,11 +183,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Summary
+        if: always()
         run: |
+          cd formatica_mobile
           echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Build Type:** ${{ github.event.inputs.build_type || 'release' }}" >> $GITHUB_STEP_SUMMARY
           echo "**Split per ABI:** ${{ github.event.inputs.split_per_abi || 'true' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Generated APKs:" >> $GITHUB_STEP_SUMMARY
-          ls -lh build/app/outputs/flutter-apk/*.apk 2>/dev/null | awk '{print "- `" $9 "` (" $5 ")"}' >> $GITHUB_STEP_SUMMARY || echo "No APKs found" >> $GITHUB_STEP_SUMMARY
+          ls -lh build/app/outputs/flutter-apk/*.apk 2>/dev/null | awk '{print "- `" $9 "` (" $5 ")"}' >> $GITHUB_STEP_SUMMARY || echo "No APKs found - build may have failed" >> $GITHUB_STEP_SUMMARY
