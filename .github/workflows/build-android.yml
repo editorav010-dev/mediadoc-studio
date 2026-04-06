@@ -124,8 +124,8 @@ jobs:
           
           echo "All APKs generated successfully!"
         env:
-          GRADLE_OPTS: "-Xmx3g -XX:MaxMetaspaceSize=1g -XX:+HeapDumpOnOutOfMemoryError"
-          JAVA_OPTS: "-Xmx3g -XX:MaxMetaspaceSize=1g"
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=2g -XX:+HeapDumpOnOutOfMemoryError"
+          JAVA_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=2g"
 
       - name: Build APK (Release - Universal)
         if: github.event.inputs.build_type == 'release' && github.event.inputs.split_per_abi != 'true'
@@ -149,33 +149,8 @@ jobs:
           ls -lh build/app/outputs/flutter-apk/ || echo "WARNING: No APKs found"
           find . -name "*.apk" -type f || echo "WARNING: No APKs found anywhere"
         env:
-          GRADLE_OPTS: "-Xmx3g -XX:MaxMetaspaceSize=1g -XX:+HeapDumpOnOutOfMemoryError"
-          JAVA_OPTS: "-Xmx3g -XX:MaxMetaspaceSize=1g"
-
-      - name: Build APK (Debug)
-        if: github.event.inputs.build_type == 'debug'
-        run: |
-          cd formatica_mobile
-          echo "=========================================="
-          echo "Building debug APK..."
-          echo "Current directory: $(pwd)"
-          echo "=========================================="
-          
-          set -e
-          flutter build apk --debug --verbose 2>&1 | tee build.log
-          BUILD_EXIT_CODE=${PIPESTATUS[0]}
-          
-          if [ $BUILD_EXIT_CODE -ne 0 ]; then
-            echo "ERROR: Flutter build failed with exit code $BUILD_EXIT_CODE"
-            exit 1
-          fi
-          
-          echo "Build completed successfully. Checking for APKs..."
-          ls -lh build/app/outputs/flutter-apk/ || echo "WARNING: No APKs found"
-          find . -name "*.apk" -type f || echo "WARNING: No APKs found anywhere"
-        env:
-          GRADLE_OPTS: "-Xmx3g -XX:MaxMetaspaceSize=1g -XX:+HeapDumpOnOutOfMemoryError"
-          JAVA_OPTS: "-Xmx3g -XX:MaxMetaspaceSize=1g"
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=2g -XX:+HeapDumpOnOutOfMemoryError"
+          JAVA_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=2g"
 
       - name: Upload build log on failure
         if: failure()
