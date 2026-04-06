@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+
 
 interface TopBarProps {
   theme: "dark" | "light";
@@ -10,8 +10,7 @@ interface TopBarProps {
 export function TopBar({ theme, onThemeToggle, deps, onFixDeps }: TopBarProps) {
   const allOk = deps.length > 0 && deps.every((d) => d.installed);
 
-  const handleFixDeps = async () => {
-    await invoke("ensure_ytdlp");
+  const handleFixDeps = () => {
     onFixDeps();
   };
 
@@ -21,7 +20,7 @@ export function TopBar({ theme, onThemeToggle, deps, onFixDeps }: TopBarProps) {
         <div className="logo">F</div>
         <div>
           <div className="appname">Formatica</div>
-          <div className="appsub">Convert, compress, extract — privately.</div>
+          <div className="appsub">Ultimate Edition · Private processing</div>
         </div>
       </div>
       <div className="tr">
@@ -30,9 +29,14 @@ export function TopBar({ theme, onThemeToggle, deps, onFixDeps }: TopBarProps) {
             key={d.name}
             className={`dpill ${d.installed ? "d-ok" : "d-err"}`}
           >
-            ● {d.name}
+            {d.installed ? "● " : "○ "} {d.name}
           </span>
         ))}
+        {!allOk && (
+          <button className="fix-btn" onClick={handleFixDeps}>
+            ⚡ Fix Now
+          </button>
+        )}
         <div className="theme-toggle">
           <button
             className={`tt-btn ${theme === "light" ? "active" : ""}`}
@@ -47,11 +51,6 @@ export function TopBar({ theme, onThemeToggle, deps, onFixDeps }: TopBarProps) {
             Dark
           </button>
         </div>
-        {!allOk && (
-          <button className="fix-btn" onClick={handleFixDeps}>
-            ⚡ Fix Now
-          </button>
-        )}
       </div>
     </header>
   );

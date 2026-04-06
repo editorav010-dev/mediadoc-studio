@@ -38,7 +38,12 @@ function normalizeExtension(extension) {
 async function loadPandocModule() {
   if (!pandocModulePromise) {
     postMessage('status', { message: 'Initializing Pandoc runtime...' });
+    console.log('[Bridge] Starting dynamic import of pandoc.js...');
     pandocModulePromise = import('./pandoc.js').catch((error) => {
+      console.error('[Bridge] Failed to import pandoc.js:', error);
+      console.error('[Bridge] Error name:', error.name);
+      console.error('[Bridge] Error message:', error.message);
+      console.error('[Bridge] Error stack:', error.stack);
       pandocModulePromise = null;
       throw error;
     });

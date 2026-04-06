@@ -28,6 +28,7 @@
    of strings.
 */
 
+console.log('[PandocJS] Starting module load, importing from wasi/index.js...');
 import {
   WASI,
   OpenFile,
@@ -35,6 +36,7 @@ import {
   ConsoleStdout,
   PreopenDirectory,
 } from "./wasi/index.js";
+console.log('[PandocJS] WASI imports loaded successfully');
 
 const args = ["pandoc.wasm", "+RTS", "-H32m", "-RTS"];
 const env = [];

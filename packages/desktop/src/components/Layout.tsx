@@ -32,7 +32,9 @@ export function Layout({
       />
       <div className="body-row">
         <Sidebar currentScreen={currentScreen} onNavigate={onNavigate} />
-        <div className="main">{children}</div>
+        <main className="main">
+          {children}
+        </main>
         <HistoryPanel />
       </div>
     </div>

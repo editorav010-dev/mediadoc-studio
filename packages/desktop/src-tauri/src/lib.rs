@@ -19,6 +19,7 @@ impl CommandExt2 for Command {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskResult {
     pub success: bool,
     pub output_path: String,
@@ -35,11 +36,77 @@ fn ytdlp_path() -> String {
     if managed.exists() {
         return managed.to_string_lossy().to_string();
     }
-    // Legacy hardcoded fallback for dev
-    "C:\\Users\\avspn\\AppData\\Roaming\\Python\\Python312\\Scripts\\yt-dlp.exe".to_string()
+    // Check PATH
+    if let Ok(o) = std::process::Command::new("where").arg("yt-dlp").hide_window().output() {
+        if o.status.success() {
+            return "yt-dlp".to_string();
+        }
+    }
+    String::new()
+}
+
+fn tesseract_path() -> String {
+    let base_managed = dirs::config_dir()
+        .unwrap_or_default()
+        .join("Formatica")
+        .join("bin")
+        .join("tesseract");
+    
+    // Check direct path and Tesseract-OCR subfolder created by some installers
+    let paths = [
+        base_managed.join("tesseract.exe"),
+        base_managed.join("Tesseract-OCR").join("tesseract.exe"),
+        std::path::PathBuf::from("C:\\Program Files\\Tesseract-OCR\\tesseract.exe"),
+        std::path::PathBuf::from("C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe"),
+        dirs::cache_dir().and_then(|p| p.parent().map(|p| p.to_path_buf())).unwrap_or_default().join("Local").join("Tesseract-OCR").join("tesseract.exe"),
+    ];
+
+    for p in paths {
+        if p.exists() {
+            return p.to_string_lossy().to_string();
+        }
+    }
+    
+    if let Ok(out) = std::process::Command::new("where").arg("tesseract").hide_window().output() {
+        if out.status.success() {
+            return String::from_utf8_lossy(&out.stdout).trim().to_string();
+        }
+    }
+    String::new()
+}
+
+fn get_domain_path() -> std::path::PathBuf {
+    // In dev: current_exe is usually target/debug/app.exe
+    // target/debug/app.exe -> target/debug -> target -> root -> packages/domain
+    // In prod: app.exe -> packages/domain (depending on layout)
+    // We'll use a robust upward walk to find 'packages/domain' starting from exe
+    let mut curr = std::env::current_exe().unwrap_or_default();
+    while curr.pop() {
+        let domain = curr.join("packages").join("domain");
+        if domain.exists() {
+            return domain;
+        }
+    }
+    // Fallback to current dir if exe-based walk fails
+    let mut curr = std::env::current_dir().unwrap_or_default();
+    loop {
+        let domain = curr.join("packages").join("domain");
+        if domain.exists() { return domain; }
+        if !curr.pop() { break; }
+    }
+    std::path::PathBuf::from("packages/domain")
 }
 
 fn ffmpeg_path() -> String {
+    let managed = dirs::config_dir()
+        .unwrap_or_default()
+        .join("Formatica")
+        .join("bin")
+        .join("ffmpeg.exe");
+    if managed.exists() {
+        return managed.to_string_lossy().to_string();
+    }
+    
     // Check next to the exe (production bundle)
     let exe_dir = std::env::current_exe()
         .ok()
@@ -51,12 +118,42 @@ fn ffmpeg_path() -> String {
             return bundled.to_string_lossy().to_string();
         }
     }
-    // Dev fallback
-    "C:\\ffmpeg\\bin\\ffmpeg.exe".to_string()
+
+    // Check PATH
+    if let Ok(o) = std::process::Command::new("where").arg("ffmpeg").hide_window().output() {
+        if o.status.success() {
+            return "ffmpeg".to_string();
+        }
+    }
+
+    String::new()
+}
+
+fn libreoffice_path() -> String {
+    let standard = "C:\\Program Files\\LibreOffice\\program\\soffice.exe";
+    let standard_x86 = "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe";
+    if std::path::Path::new(standard).exists() { return standard.to_string(); }
+    if std::path::Path::new(standard_x86).exists() { return standard_x86.to_string(); }
+    
+    if let Ok(out) = std::process::Command::new("where").arg("soffice").hide_window().output() {
+        if out.status.success() {
+            return String::from_utf8_lossy(&out.stdout).trim().to_string();
+        }
+    }
+    String::new()
+}
+
+fn python_path() -> String {
+    if let Ok(out) = std::process::Command::new("where").arg("python").hide_window().output() {
+        if out.status.success() {
+            return String::from_utf8_lossy(&out.stdout).trim().to_string();
+        }
+    }
+    "python".to_string()
 }
 
 #[tauri::command]
-async fn ensure_ytdlp() -> Result<TaskResult, String> {
+async fn install_ytdlp(window: tauri::Window) -> Result<TaskResult, String> {
     // Check if yt-dlp already exists at our managed path
     let ytdlp_dir = dirs::config_dir()
         .unwrap_or_default()
@@ -68,20 +165,29 @@ async fn ensure_ytdlp() -> Result<TaskResult, String> {
         return Ok(TaskResult {
             success: true,
             output_path: ytdlp_path.to_string_lossy().to_string(),
-            error_message: "already installed".to_string(),
+            error_message: String::new(),
         });
     }
 
     // Download yt-dlp.exe from official GitHub releases
     let result = tokio::task::spawn_blocking(move || {
-        std::fs::create_dir_all(&ytdlp_dir).ok();
+        let _ = std::fs::create_dir_all(&ytdlp_dir);
+        let _ = window.emit("setup_progress", serde_json::json!({
+            "step": "ytdlp",
+            "status": "downloading",
+            "message": "Downloading media downloader...",
+            "percent": 20
+        }));
+
         let url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
         let output = std::process::Command::new("powershell")
             .args([
+                "-NoProfile",
                 "-WindowStyle", "Hidden",
                 "-Command",
                 &format!(
-                    "Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
+                    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
+                     Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
                     url,
                     ytdlp_path.to_string_lossy()
                 ),
@@ -89,8 +195,18 @@ async fn ensure_ytdlp() -> Result<TaskResult, String> {
             .hide_window()
             .output();
         match output {
-            Ok(o) if o.status.success() => Ok(ytdlp_path.to_string_lossy().to_string()),
-            Ok(o) => Err(String::from_utf8_lossy(&o.stderr).to_string()),
+            Ok(o) if o.status.success() => {
+                let _ = window.emit("setup_progress", serde_json::json!({
+                    "step": "ytdlp",
+                    "status": "done",
+                    "percent": 100
+                }));
+                Ok(ytdlp_path.to_string_lossy().to_string())
+            }
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr).to_string();
+                Err(if err.is_empty() { "Download failed (PowerShell error)".to_string() } else { err })
+            }
             Err(e) => Err(e.to_string()),
         }
     }).await.map_err(|e| e.to_string())?;
@@ -102,27 +218,58 @@ async fn ensure_ytdlp() -> Result<TaskResult, String> {
 }
 
 #[tauri::command]
-async fn open_url(url: String) {
+async fn open_url(url: String) -> Result<(), String> {
+    if url.is_empty() { return Err("Path is empty".to_string()); }
+    
+    // Check if it's a local path and if it exists
+    if !url.starts_with("http") && !std::path::Path::new(&url).exists() {
+        return Err("The file or location no longer exists.".to_string());
+    }
+
     let _ = std::process::Command::new("cmd")
-        .args(["/c", "start", &url])
+        .args(["/c", "start", "", &url])
         .hide_window()
         .spawn();
+    Ok(())
 }
 
 #[tauri::command]
-async fn get_setup_status() -> Result<serde_json::Value, String> {
-    let libreoffice_installed = std::path::Path::new(
-        "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
-    ).exists();
+async fn open_in_folder(path: String) -> Result<(), String> {
+    if path.is_empty() { return Err("Path is empty".to_string()); }
     
-    let ytdlp_installed = std::path::Path::new(&ytdlp_path()).exists();
+    if !std::path::Path::new(&path).exists() {
+        return Err("The file or folder no longer exists.".to_string());
+    }
+    
+    // explorer /select,path highlights the file in its folder
+    let _ = std::process::Command::new("explorer")
+        .arg(format!("/select,{}", path))
+        .hide_window()
+        .spawn();
+    Ok(())
+}
+#[tauri::command]
+async fn get_setup_status() -> Result<serde_json::Value, String> {
+    let _common_libre_paths = [
+        "C:\\Program Files\\LibreOffice\\program\\soffice.exe",
+        "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",
+    ];
+    let libreoffice_installed = !libreoffice_path().is_empty();
+    let python_installed = std::process::Command::new("python").arg("--version").hide_window().output().map(|o| o.status.success()).unwrap_or(false);
+    let ytdlp_installed = !ytdlp_path().is_empty();
+    let ffmpeg_installed = !ffmpeg_path().is_empty();
+    let tesseract_installed = !tesseract_path().is_empty();
     
     Ok(serde_json::json!({
         "libreoffice": libreoffice_installed,
         "ytdlp": ytdlp_installed,
-        "needs_setup": !libreoffice_installed || !ytdlp_installed
+        "ffmpeg": ffmpeg_installed,
+        "tesseract": tesseract_installed,
+        "python": python_installed,
+        "needs_setup": !libreoffice_installed || !ytdlp_installed || !ffmpeg_installed || !tesseract_installed || !python_installed
     }))
 }
+
 
 #[tauri::command]
 async fn install_libreoffice(window: tauri::Window) -> Result<TaskResult, String> {
@@ -143,10 +290,12 @@ async fn install_libreoffice(window: tauri::Window) -> Result<TaskResult, String
         // Download using PowerShell with progress
         let download = std::process::Command::new("powershell")
             .args([
+                "-NoProfile",
                 "-WindowStyle", "Hidden",
                 "-Command",
                 &format!(
-                    "$url = 'https://download.documentfoundation.org/libreoffice/stable/24.8.4/win/x86_64/LibreOffice_24.8.4_Win_x86-64.msi'; \
+                    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
+                     $url = 'https://download.documentfoundation.org/libreoffice/stable/24.8.4/win/x86_64/LibreOffice_24.8.4_Win_x86-64.msi'; \
                      $out = '{}'; \
                      $wc = New-Object System.Net.WebClient; \
                      $wc.DownloadFile($url, $out); \
@@ -205,51 +354,92 @@ async fn install_libreoffice(window: tauri::Window) -> Result<TaskResult, String
     }
 }
 
+
+
 #[tauri::command]
-async fn install_ytdlp(window: tauri::Window) -> Result<TaskResult, String> {
-    let ytdlp_dir = dirs::config_dir()
+async fn install_ffmpeg(window: tauri::Window) -> Result<TaskResult, String> {
+    let bin_dir = dirs::config_dir()
         .unwrap_or_default()
         .join("Formatica")
         .join("bin");
-    let ytdlp_path = ytdlp_dir.join("yt-dlp.exe");
+    let ffmpeg_exe = bin_dir.join("ffmpeg.exe");
 
-    if ytdlp_path.exists() {
-        return Ok(TaskResult { success: true, output_path: ytdlp_path.to_string_lossy().to_string(), error_message: "already installed".to_string() });
+    if ffmpeg_exe.exists() {
+        return Ok(TaskResult { success: true, output_path: ffmpeg_exe.to_string_lossy().to_string(), error_message: String::new() });
     }
 
     let result = tokio::task::spawn_blocking(move || {
-        let _ = std::fs::create_dir_all(&ytdlp_dir);
+        let _ = std::fs::create_dir_all(&bin_dir);
         let _ = window.emit("setup_progress", serde_json::json!({
-            "step": "ytdlp",
+            "step": "ffmpeg",
             "status": "downloading",
-            "message": "Downloading media downloader (yt-dlp)...",
+            "message": "Downloading media engine (FFmpeg)...",
             "percent": 10
         }));
 
-        let output = std::process::Command::new("powershell")
+        let zip_path = bin_dir.join("ffmpeg.zip");
+        let download = std::process::Command::new("powershell")
             .args([
+                "-NoProfile",
                 "-WindowStyle", "Hidden",
                 "-Command",
                 &format!(
-                    "Invoke-WebRequest -Uri 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe' -OutFile '{}' -UseBasicParsing",
-                    ytdlp_path.to_string_lossy()
+                    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
+                     Invoke-WebRequest -Uri 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile '{}' -UseBasicParsing",
+                    zip_path.to_string_lossy()
                 ),
             ])
             .hide_window()
             .output();
 
-        match output {
-            Ok(o) if o.status.success() => {
+        if let Ok(o) = download {
+            if o.status.success() {
                 let _ = window.emit("setup_progress", serde_json::json!({
-                    "step": "ytdlp",
-                    "status": "done",
-                    "message": "Media downloader ready!",
-                    "percent": 100
+                    "step": "ffmpeg",
+                    "status": "extracting",
+                    "message": "Extracting FFmpeg...",
+                    "percent": 60
                 }));
-                Ok(ytdlp_path.to_string_lossy().to_string())
+
+                // Extract and move ffmpeg.exe to bin folder
+                let extract = std::process::Command::new("powershell")
+                    .args([
+                        "-WindowStyle", "Hidden",
+                        "-Command",
+                        &format!(
+                            "Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
+                             Get-ChildItem -Path '{}' -Filter 'ffmpeg.exe' -Recurse | Move-Item -Destination '{}' -Force",
+                            zip_path.to_string_lossy(),
+                            bin_dir.join("temp_ffmpeg").to_string_lossy(),
+                            bin_dir.join("temp_ffmpeg").to_string_lossy(),
+                            bin_dir.to_string_lossy()
+                        ),
+                    ])
+                    .hide_window()
+                    .output();
+
+                let _ = std::fs::remove_file(&zip_path);
+                let _ = std::fs::remove_dir_all(bin_dir.join("temp_ffmpeg")).ok();
+
+                if let Ok(e) = extract {
+                    if e.status.success() {
+                        let _ = window.emit("setup_progress", serde_json::json!({
+                            "step": "ffmpeg",
+                            "status": "done",
+                            "percent": 100
+                        }));
+                        Ok(ffmpeg_exe.to_string_lossy().to_string())
+                    } else {
+                        Err(String::from_utf8_lossy(&e.stderr).to_string())
+                    }
+                } else {
+                    Err("Extraction failed".to_string())
+                }
+            } else {
+                Err(String::from_utf8_lossy(&o.stderr).to_string())
             }
-            Ok(o) => Err(String::from_utf8_lossy(&o.stderr).to_string()),
-            Err(e) => Err(e.to_string()),
+        } else {
+            Err("Download failed".to_string())
         }
     }).await.map_err(|e| e.to_string())?;
 
@@ -260,7 +450,96 @@ async fn install_ytdlp(window: tauri::Window) -> Result<TaskResult, String> {
 }
 
 #[tauri::command]
-async fn convert_document(input_path: String, output_format: String, output_dir: String) -> TaskResult {
+async fn install_tesseract(window: tauri::Window) -> Result<TaskResult, String> {
+    let t_dir = dirs::config_dir()
+        .unwrap_or_default()
+        .join("Formatica")
+        .join("bin")
+        .join("tesseract");
+    let t_exe = t_dir.join("tesseract.exe");
+
+    if t_exe.exists() {
+        return Ok(TaskResult { success: true, output_path: t_exe.to_string_lossy().to_string(), error_message: String::new() });
+    }
+
+    let result = tokio::task::spawn_blocking(move || {
+        let _ = std::fs::create_dir_all(&t_dir);
+        let _ = window.emit("setup_progress", serde_json::json!({
+            "step": "tesseract",
+            "status": "downloading",
+            "message": "Downloading OCR engine (Tesseract)...",
+            "percent": 10
+        }));
+
+        let installer = t_dir.parent().unwrap().join("tesseract_installer.exe");
+        let download = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-WindowStyle", "Hidden",
+                "-Command",
+                &format!(
+                    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
+                     Invoke-WebRequest -Uri 'https://github.com/UB-Mannheim/tesseract/releases/download/v5.4.0.20240606/tesseract-ocr-w64-setup-5.4.0.20240606.exe' -OutFile '{}' -UseBasicParsing",
+                    installer.to_string_lossy()
+                ),
+            ])
+            .hide_window()
+            .output();
+
+        if let Ok(o) = download {
+            if o.status.success() {
+                let _ = window.emit("setup_progress", serde_json::json!({
+                    "step": "tesseract",
+                    "status": "installing",
+                    "message": "Installing OCR engine (Tesseract)...",
+                    "percent": 60
+                }));
+
+                // Installer MUST NOT be hidden so user can approve UAC prompt
+                let install = std::process::Command::new(installer.clone())
+                    .args([
+                        "/S", 
+                        &format!("/D={}", t_dir.to_string_lossy())
+                    ])
+                    // .hide_window() REMOVED to allow UAC prompt
+                    .output();
+
+                let _ = std::fs::remove_file(&installer).ok();
+
+                if let Ok(i) = install {
+                    if i.status.success() {
+                        if t_exe.exists() {
+                            let _ = window.emit("setup_progress", serde_json::json!({
+                                "step": "tesseract",
+                                "status": "done",
+                                "percent": 100
+                            }));
+                            Ok(t_exe.to_string_lossy().to_string())
+                        } else {
+                            Err("Installation appeared successful, but tesseract.exe was not found in the expected location. Please try manually installing Tesseract OCR.".to_string())
+                        }
+                    } else {
+                        Err(String::from_utf8_lossy(&i.stderr).to_string())
+                    }
+                } else {
+                    Err("Installation failed".to_string())
+                }
+            } else {
+                Err(String::from_utf8_lossy(&o.stderr).to_string())
+            }
+        } else {
+            Err("Download failed".to_string())
+        }
+    }).await.map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(path) => Ok(TaskResult { success: true, output_path: path, error_message: String::new() }),
+        Err(e) => Ok(TaskResult { success: false, output_path: String::new(), error_message: e }),
+    }
+}
+
+#[tauri::command]
+async fn convert_document(input_path: String, output_format: String, output_dir: String, output_name: String) -> TaskResult {
     let input = std::path::Path::new(&input_path);
     let input_ext = input.extension().unwrap_or_default().to_string_lossy().to_lowercase();
     
@@ -289,7 +568,11 @@ async fn convert_document(input_path: String, output_format: String, output_dir:
     let output_dir_clone = output_dir.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("C:\\Program Files\\LibreOffice\\program\\soffice.exe")
+        let l_path = libreoffice_path();
+        if l_path.is_empty() {
+             return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "LibreOffice not found"));
+        }
+        Command::new(l_path)
             .args(["--headless", "--convert-to", &convert_arg_owned, "--outdir", &output_dir_clone, &input_path_clone])
             .hide_window()
             .output()
@@ -297,11 +580,37 @@ async fn convert_document(input_path: String, output_format: String, output_dir:
 
     match result {
         Ok(o) if o.status.success() => {
-            // Find the output file
+            // LibreOffice always uses the input filename but with the new extension.
+            // We need to rename it to the requested output_name.
             let stem = input.file_stem().unwrap_or_default().to_string_lossy();
-            let actual_ext = if output_format.contains(':') { output_format.split(':').next().unwrap_or(&output_format) } else { &output_format };
-            let output_file = format!("{}\\{}.{}", output_dir, stem, actual_ext);
-            TaskResult { success: true, output_path: output_file, error_message: String::new() }
+            let actual_ext = if output_format.contains(':') { 
+                output_format.split(':').next().unwrap_or(&output_format) 
+            } else { 
+                &output_format 
+            };
+            
+            let temp_output = format!("{}\\{}.{}", output_dir, stem, actual_ext);
+            let final_output = format!("{}\\{}.{}", output_dir, output_name, actual_ext);
+            
+            // Log for debugging if needed (invisible to user)
+            println!("Renaming from {} to {}", temp_output, final_output);
+
+            if temp_output != final_output {
+                if let Err(e) = std::fs::rename(&temp_output, &final_output) {
+                    // If regular rename fails, maybe the file wasn't exactly named as we expected
+                    // (e.g. extension case mismatch). We'll return success if final_output exists,
+                    // otherwise return failure.
+                    if !std::path::Path::new(&final_output).exists() {
+                         return TaskResult { 
+                             success: false, 
+                             output_path: String::new(), 
+                             error_message: format!("Failed to rename output to {}. Error: {}", output_name, e) 
+                         };
+                    }
+                }
+            }
+            
+            TaskResult { success: true, output_path: final_output, error_message: String::new() }
         },
         Ok(o) => TaskResult {
             success: false,
@@ -318,10 +627,8 @@ async fn convert_document(input_path: String, output_format: String, output_dir:
 }
 
 #[tauri::command]
-async fn convert_audio(input_path: String, output_format: String, bitrate: String, output_dir: String) -> TaskResult {
-    let input = std::path::Path::new(&input_path);
-    let stem = input.file_stem().unwrap_or_default().to_string_lossy();
-    let output_file = format!("{}\\{}_converted.{}", output_dir, stem, output_format);
+async fn convert_audio(input_path: String, output_format: String, bitrate: String, output_dir: String, output_name: String) -> TaskResult {
+    let output_file = format!("{}\\{}.{}", output_dir, output_name, output_format);
     
     let mut args = vec!["-i".to_string(), input_path.clone(), "-y".to_string()];
     
@@ -363,10 +670,9 @@ async fn convert_video(
     output_dir: String,
     quality: String,
     preset: Option<String>,
+    output_name: String,
 ) -> TaskResult {
-    let input = std::path::Path::new(&input_path);
-    let stem = input.file_stem().unwrap_or_default().to_string_lossy();
-    let output_file = format!("{}\\{}_converted.{}", output_dir, stem, output_format);
+    let output_file = format!("{}\\{}.{}", output_dir, output_name, output_format);
     
     // Always use H.264 for maximum compatibility
     // H.265 causes playback issues on Windows without codec packs
@@ -467,13 +773,13 @@ async fn convert_image_format(
     input_path: String,
     output_format: String,
     output_dir: String,
+    output_name: String,
 ) -> TaskResult {
     let script = format!(r#"
 from PIL import Image
 import os
 img = Image.open(r'{}')
-stem = os.path.splitext(os.path.basename(r'{}'))[0]
-out = os.path.join(r'{}', stem + '_converted.{}')
+out = os.path.join(r'{}', r'{}.' + '{}')
 if '{}' in ('jpg', 'jpeg'):
     img = img.convert('RGB')
     img.save(out, 'JPEG', quality=95)
@@ -490,7 +796,7 @@ elif '{}' == 'tiff':
 else:
     img.save(out)
 print(out)
-"#, input_path, input_path, output_dir, output_format,
+"#, input_path, output_dir, output_name, output_format,
     output_format, output_format, output_format, output_format,
     output_format, output_format);
 
@@ -569,17 +875,16 @@ struct DepStatus {
 
 #[tauri::command]
 fn check_dependencies() -> Vec<DepStatus> {
-    let ytdlp = ytdlp_path();
-    let ffmpeg = ffmpeg_path();
-
     let deps: Vec<(&str, String)> = vec![
-        ("LibreOffice", "C:\\Program Files\\LibreOffice\\program\\soffice.exe".to_string()),
-        ("ffmpeg", ffmpeg),
-        ("yt-dlp", ytdlp),
+        ("LibreOffice", libreoffice_path()),
+        ("ffmpeg", ffmpeg_path()),
+        ("yt-dlp", ytdlp_path()),
+        ("Tesseract", tesseract_path()),
+        ("Python", python_path()),
     ];
 
     deps.iter().map(|(name, path)| {
-        let installed = std::path::Path::new(path.as_str()).exists();
+        let installed = !path.is_empty() && (path == "python" || path == "ffmpeg" || path == "yt-dlp" || path == "tesseract" || path == "soffice" || std::path::Path::new(path.as_str()).exists());
         DepStatus {
             name: name.to_string(),
             command: path.clone(),
@@ -596,12 +901,11 @@ async fn compress_video(
     resolution: String,
     crf: String,
     preset: String,
+    output_name: String,
 ) -> Result<TaskResult, String> {
     use std::path::Path;
 
-    let input = Path::new(&input_path);
-    let stem = input.file_stem().unwrap_or_default().to_string_lossy();
-    let output_path = format!("{}\\{}_compressed.{}", output_dir, stem, output_format);
+    let output_path = format!("{}\\{}.{}", output_dir, output_name, output_format);
 
     let crf_num: u32 = crf.parse().unwrap_or(23);
 
@@ -730,14 +1034,16 @@ async fn compress_video(
 #[tauri::command]
 async fn merge_pdfs(input_paths: Vec<String>, output_path: String) -> Result<TaskResult, String> {
     let result = tokio::task::spawn_blocking(move || {
+        let domain_dir = get_domain_path();
+
         std::process::Command::new("python")
             .args([
                 "-c",
                 &format!(
-                    "import sys; sys.path.insert(0, r'C:\\Users\\avspn\\mediadoc-studio\\packages\\domain'); \
+                    "import sys; sys.path.insert(0, r'{}'); \
                      from adapters.pdf_tools import merge_pdfs; \
                      import json; r = merge_pdfs({:?}, {:?}); print(json.dumps(r))",
-                    input_paths, output_path
+                    domain_dir.display(), input_paths, output_path
                 ),
             ])
             .hide_window()
@@ -766,16 +1072,18 @@ async fn merge_pdfs(input_paths: Vec<String>, output_path: String) -> Result<Tas
 async fn split_pdf(
     input_path: String, output_dir: String,
     mode: String, value: String,
+    output_prefix: String,
 ) -> Result<TaskResult, String> {
     let result = tokio::task::spawn_blocking(move || {
+        let domain_dir = get_domain_path();
         std::process::Command::new("python")
             .args([
                 "-c",
                 &format!(
-                    "import sys; sys.path.insert(0, r'C:\\Users\\avspn\\mediadoc-studio\\packages\\domain'); \
+                    "import sys; sys.path.insert(0, r'{}'); \
                      from adapters.pdf_tools import split_pdf; \
-                     import json; r = split_pdf({:?}, {:?}, {:?}, {:?}); print(json.dumps(r))",
-                    input_path, output_dir, mode, value
+                     import json; r = split_pdf({:?}, {:?}, {:?}, {:?}, {:?}); print(json.dumps(r))",
+                    domain_dir.display(), input_path, output_dir, mode, value, output_prefix
                 ),
             ])
             .hide_window()
@@ -803,14 +1111,15 @@ async fn split_pdf(
 #[tauri::command]
 async fn greyscale_pdf(input_path: String, output_path: String) -> Result<TaskResult, String> {
     let result = tokio::task::spawn_blocking(move || {
+        let domain_dir = get_domain_path();
         std::process::Command::new("python")
             .args([
                 "-c",
                 &format!(
-                    "import sys; sys.path.insert(0, r'C:\\Users\\avspn\\mediadoc-studio\\packages\\domain'); \
+                    "import sys; sys.path.insert(0, r'{}'); \
                      from adapters.pdf_tools import greyscale_pdf; \
                      import json; r = greyscale_pdf({:?}, {:?}); print(json.dumps(r))",
-                    input_path, output_path
+                    domain_dir.display(), input_path, output_path
                 ),
             ])
             .hide_window()
@@ -854,79 +1163,131 @@ async fn mark_initialized() {
 
 #[tauri::command]
 async fn perform_ocr(
-    _input_path: String,
+    input_path: String,
     output_path: String,
-    _language: String,
-    _mode: String,
+    language: String,
+    ocr_mode: String,
     output_format: String,
 ) -> Result<TaskResult, String> {
-    // For now, create a sample output file
-    // TODO: integrate with tesseract when available
-    let output_file = if output_format == "pdf" {
-        format!("{}/ocr_output.pdf", output_path)
-    } else {
-        format!("{}/ocr_output.txt", output_path)
-    };
-
-    // Create output directory if it doesn't exist
-    if let Err(_) = std::fs::create_dir_all(&output_path) {
-        return Err("Failed to create output directory".to_string());
+    let t_path = tesseract_path();
+    if t_path.is_empty() {
+        return Err("Tesseract OCR is not installed. Please install it via Setup first.".to_string());
     }
 
-    // Create a sample output file
-    let sample_text = "SERVICE AGREEMENT\n\nThis agreement is entered into as of the date herein,\nbetween the parties hereto.\n\n1. SCOPE OF SERVICES\n\nThe Provider agrees to deliver services as detailed in Schedule A.\n\n[Extracted via OCR - 2,847 words detected]";
+    let domain_path = get_domain_path();
 
-    match std::fs::write(&output_file, sample_text) {
-        Ok(_) => {
-            Ok(TaskResult {
-                success: true,
-                output_path: output_file,
-                error_message: String::new(),
-            })
+    let result = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("python")
+            .args([
+                "-c",
+                &format!(
+                    "import sys; sys.path.insert(0, r'{}'); \
+                     from adapters.pdf_tools import perform_ocr; \
+                     import json; r = perform_ocr({:?}, {:?}, {:?}, {:?}, {:?}, {:?}); print(json.dumps(r))",
+                    domain_path.display(),
+                    input_path, output_path, language, ocr_mode, output_format, t_path
+                ),
+            ])
+            .hide_window()
+            .output()
+    }).await.map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+                Ok(TaskResult {
+                    success: val["success"].as_bool().unwrap_or(false),
+                    output_path: val["output_path"].as_str().unwrap_or("").to_string(),
+                    error_message: val["error_message"].as_str().unwrap_or("").to_string(),
+                })
+            } else {
+                Ok(TaskResult { success: false, output_path: String::new(),
+                    error_message: format!("Parse error: {}", stdout) })
+            }
         }
-        Err(e) => {
-            Err(format!("Failed to write OCR output: {}", e))
-        }
+        Err(e) => Ok(TaskResult { success: false, output_path: String::new(), error_message: e.to_string() }),
     }
 }
 
 #[tauri::command]
 async fn apply_watermark(
-    _input_path: String,
+    input_path: String,
     output_path: String,
-    _watermark_text: String,
-    _font_size: i32,
-    _opacity: i32,
-    _color: String,
-    _position: String,
+    watermark_text: String,
+    font_size: i32,
+    opacity: i32,
+    color: String,
+    position: String,
 ) -> Result<TaskResult, String> {
-    // For now, create a sample watermarked file
-    // TODO: integrate with image processing library (imagemagick, etc.)
+    let domain_path = get_domain_path();
 
-    let output_file = format!("{}/watermarked.png", output_path);
+    let result = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("python")
+            .args([
+                "-c",
+                &format!(
+                    "import sys; sys.path.insert(0, r'{}'); \
+                     from adapters.image_tools import apply_watermark; \
+                     import json; r = apply_watermark({:?}, {:?}, {:?}, {}, {}, {:?}, {:?}); print(json.dumps(r))",
+                    domain_path.display(),
+                    input_path, output_path, watermark_text, font_size, opacity, color, position
+                ),
+            ])
+            .hide_window()
+            .output()
+    }).await.map_err(|e| e.to_string())?;
 
-    // Create output directory if it doesn't exist
-    if let Err(_) = std::fs::create_dir_all(&output_path) {
-        return Err("Failed to create output directory".to_string());
-    }
-
-    // In production, we would:
-    // 1. Load the input image
-    // 2. Apply watermark text/logo at specified position with opacity
-    // 3. Save the result
-    // For now, create a marker file
-    match std::fs::write(&output_file, "WATERMARKED_IMAGE_PLACEHOLDER") {
-        Ok(_) => {
-            Ok(TaskResult {
-                success: true,
-                output_path: output_file,
-                error_message: String::new(),
-            })
+    match result {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+                Ok(TaskResult {
+                    success: val["success"].as_bool().unwrap_or(false),
+                    output_path: val["output_path"].as_str().unwrap_or("").to_string(),
+                    error_message: val["error_message"].as_str().unwrap_or("").to_string(),
+                })
+            } else {
+                Ok(TaskResult { success: false, output_path: String::new(),
+                    error_message: format!("Parse error: {}", stdout) })
+            }
         }
-        Err(e) => {
-            Err(format!("Failed to apply watermark: {}", e))
-        }
+        Err(e) => Ok(TaskResult { success: false, output_path: String::new(), error_message: e.to_string() }),
     }
+}
+
+#[tauri::command]
+async fn check_python_deps() -> Result<TaskResult, String> {
+    let result = tokio::task::spawn_blocking(move || {
+        // Run pip install for required libraries
+        let output = std::process::Command::new("python")
+            .args([
+                "-m", "pip", "install", 
+                "pytesseract", "pymupdf", "Pillow", "pypdf", "--quiet"
+            ])
+            .hide_window()
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                Ok(TaskResult {
+                    success: true,
+                    output_path: "Python dependencies verified".to_string(),
+                    error_message: String::new(),
+                })
+            }
+            Ok(o) => {
+                Ok(TaskResult {
+                    success: false,
+                    output_path: String::new(),
+                    error_message: format!("Failed to install Python deps: {}", String::from_utf8_lossy(&o.stderr)),
+                })
+            }
+            Err(e) => Err(format!("Python not found in system PATH. Please install Python first: {}", e)),
+        }
+    }).await.map_err(|e| e.to_string())?;
+
+    result
 }
 
 #[tauri::command]
@@ -1052,12 +1413,15 @@ pub fn run() {
             greyscale_pdf,
             is_first_run,
             mark_initialized,
-            ensure_ytdlp,
             open_url,
+            open_in_folder,
             get_setup_status,
             install_libreoffice,
             install_ytdlp,
+            install_ffmpeg,
+            install_tesseract,
             perform_ocr,
+            check_python_deps,
             apply_watermark,
             scan_folder,
             batch_convert_folder,
