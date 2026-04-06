@@ -46,7 +46,7 @@ def test_empty_input_list(tmp_path):
     success, out_path, error = images_to_pdf([], str(output_path))
 
     assert success is False
-    assert "at least one image" in error.lower()
+    assert "at least one image" in error.lower() or "need at least one image" in error.lower()
 
 
 def test_missing_image_file(tmp_path):

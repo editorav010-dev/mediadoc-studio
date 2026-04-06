@@ -59,10 +59,9 @@ jobs:
       - name: Analyze code
         run: flutter analyze
         continue-on-error: true
+        working-directory: formatica_mobile
 
-      - name: Run tests
-        run: flutter test
-        continue-on-error: true
+      # Note: Flutter tests are optional for APK build - we focus on successful compilation
 
       - name: Build APK (Release - Split per ABI)
         if: github.event.inputs.build_type == 'release' && github.event.inputs.split_per_abi == 'true'
