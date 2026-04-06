@@ -69,7 +69,7 @@ jobs:
           echo "Dependencies installed successfully"
           echo "Current directory: $(pwd)"
           echo "Files in lib/:"
-          ls -la lib/
+          ls -la formatica_mobile/lib/ 2>/dev/null || ls -la lib/ 2>/dev/null || echo "WARNING: lib/ not found in $(pwd)"
 
       - name: Analyze code
         run: |
