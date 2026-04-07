@@ -9,6 +9,7 @@ import 'package:printing/printing.dart';
 
 import '../core/constants.dart';
 import 'file_service.dart';
+import 'native_document_converter.dart';
 import 'pandoc_bridge.dart';
 
 class ConvertService {
@@ -39,9 +40,23 @@ class ConvertService {
             const <String>[];
     if (!supportedOutputs.contains(normalizedOutputFormat)) {
       throw Exception(
-          'Pandoc cannot convert .$inputExtension to .$normalizedOutputFormat on-device.');
+          'Cannot convert .$inputExtension to .$normalizedOutputFormat on-device.');
     }
 
+    // Route to appropriate converter based on file type
+    if (normalizedOutputFormat == 'pdf' && 
+        NativeDocumentConverter.isSupported(inputExtension)) {
+      // Use native converter for XLSX, XLS, PPTX, PPT, CSV
+      onStage?.call('Using native converter...');
+      return await _convertWithNativeConverter(
+        inputFilePath: inputFilePath,
+        inputExtension: inputExtension,
+        onProgress: onProgress,
+        onStage: onStage,
+      );
+    }
+
+    // Use Pandoc WASM for DOCX, ODT, HTML, MD, TXT, RTF, EPUB
     final base = p.basenameWithoutExtension(inputFilePath);
     final outputCategory = normalizedOutputFormat == 'pdf'
         ? OutputCategory.pdfs
@@ -90,6 +105,22 @@ class ConvertService {
     onProgress(1.0);
 
     return outPath;
+  }
+
+  /// Convert document using native Android libraries (Apache POI).
+  static Future<String> _convertWithNativeConverter({
+    required String inputFilePath,
+    required String inputExtension,
+    required void Function(double) onProgress,
+    void Function(String stage)? onStage,
+  }) async {
+    onStage?.call('Converting with native engine...');
+    
+    return await NativeDocumentConverter.convertToPdf(
+      inputPath: inputFilePath,
+      format: inputExtension,
+      onProgress: onProgress,
+    );
   }
 
   static String _normalizeOutputFormat(String format) {

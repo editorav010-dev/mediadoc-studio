@@ -919,7 +919,8 @@ function ImageScreen({ onBack, addTask, updateTask, tasks, state, updateState }:
     try {
       const res = await invoke<TaskResult>("images_to_pdf", { 
         imagePaths: files.map((f: any) => f.path), 
-        outputPath: outputDir + "\\" + outputName + ".pdf"
+        outputPath: outputDir + "\\" + outputName + ".pdf",
+        layout: layout
       });
       
       if (res.success) {
@@ -2436,7 +2437,12 @@ function SetupScreen({ onComplete }: { onComplete: () => void }) {
       // Final Step: Install Python deps if python found
       if (status.python) {
         setCurrentMsg("Updating Python dependencies...");
-        await invoke("check_python_deps");
+        try {
+          await invoke("check_python_deps");
+        } catch (e) {
+          console.error("Dependency check failed:", e);
+          // Don't block the UI for dependency issues - handled as non-critical
+        }
       }
 
       setAllDone(true);
@@ -3381,7 +3387,7 @@ function QueueScreen({ onBack, tasks, removeTask }: { onBack: () => void, tasks:
                       <button className="back-btn" style={{ position: 'static', padding: '4px', fontSize: '12px' }} onClick={() => removeTask(t.id)}>×</button>
                     </div>
                     {t.status === 'completed' && t.outputPath && (
-                      <button className="sbtn" style={{ width: '100%', marginTop: '8px', fontSize: '10px' }} onClick={() => invoke("open_url", { url: t.outputPath })}>Open File</button>
+                      <button className="sbtn" style={{ width: '100%', marginTop: '8px', fontSize: '10px' }} onClick={() => invoke("open_url", { url: t.outputPath }).catch(alert)}>Open File</button>
                     )}
                   </div>
                 ))}

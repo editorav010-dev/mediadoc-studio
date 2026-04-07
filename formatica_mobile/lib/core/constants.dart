@@ -24,6 +24,7 @@ abstract class AppConstants {
   ];
 
   static const Map<String, List<String>> documentOutputFormats = {
+    // Text documents (Pandoc WASM - full format support)
     'docx': ['pdf', 'odt', 'html', 'txt', 'rtf', 'epub', 'md'],
     'odt': ['pdf', 'docx', 'html', 'txt', 'rtf', 'epub', 'md'],
     'rtf': ['pdf', 'docx', 'odt', 'html', 'txt', 'md'],
@@ -32,11 +33,18 @@ abstract class AppConstants {
     'txt': ['pdf', 'docx', 'odt', 'html', 'rtf', 'epub', 'md'],
     'md': ['pdf', 'docx', 'odt', 'html', 'txt', 'rtf', 'epub'],
     'epub': ['pdf', 'docx', 'odt', 'html', 'txt', 'md'],
-    'pdf': ['docx', 'odt', 'html', 'txt', 'rtf', 'epub'],
+    
+    // Spreadsheets (Native Apache POI - PDF output only)
+    'xlsx': ['pdf'],
+    'xls': ['pdf'],
+    'csv': ['pdf'],
+    
+    // Presentations (Native Apache POI - PDF output only)
     'ppt': ['pdf'],
     'pptx': ['pdf'],
-    'xls': ['pdf'],
-    'xlsx': ['pdf'],
+    
+    // PDF (Pandoc WASM - text extraction only)
+    'pdf': ['docx', 'odt', 'html', 'txt', 'rtf', 'epub'],
   };
 
   // Video formats

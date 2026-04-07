@@ -11,6 +11,7 @@ import java.io.File
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.formatica/platform"
+    private val documentConverter = DocumentConverter()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -29,6 +30,42 @@ class MainActivity : FlutterActivity() {
                             }
                         } else {
                             result.error("INVALID_PATH", "Path is null", null)
+                        }
+                    }
+                    "convertDocumentToPdf" -> {
+                        val inputPath = call.argument<String>("inputPath")
+                        val outputPath = call.argument<String>("outputPath")
+                        val format = call.argument<String>("format")
+
+                        if (inputPath == null || outputPath == null || format == null) {
+                            result.error("INVALID_ARGS", "Missing required arguments", null)
+                            return@setMethodCallHandler
+                        }
+
+                        try {
+                            val conversionResult = when (format.lowercase()) {
+                                "xlsx", "xls", "csv" -> {
+                                    documentConverter.convertSpreadsheetToPdf(inputPath, outputPath, format)
+                                }
+                                "pptx", "ppt" -> {
+                                    documentConverter.convertPresentationToPdf(inputPath, outputPath, format)
+                                }
+                                else -> {
+                                    result.error("UNSUPPORTED_FORMAT", "Format not supported: $format", null)
+                                    return@setMethodCallHandler
+                                }
+                            }
+
+                            conversionResult.fold(
+                                onSuccess = { pdfPath ->
+                                    result.success(pdfPath)
+                                },
+                                onFailure = { error ->
+                                    result.error("CONVERSION_FAILED", error.message, null)
+                                }
+                            )
+                        } catch (e: Exception) {
+                            result.error("CONVERSION_ERROR", e.message, null)
                         }
                     }
                     "openFolder" -> {

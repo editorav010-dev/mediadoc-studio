@@ -55,3 +55,13 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Apache POI for Microsoft Office format parsing
+    implementation("org.apache.poi:poi:5.2.5")              // HSSF (XLS) and common POI classes
+    implementation("org.apache.poi:poi-ooxml:5.2.5")        // XSSF (XLSX) and OOXML support
+    implementation("org.apache.poi:poi-scratchpad:5.2.5")   // HSLF (PPT) and legacy format support
+    
+    // AndroidX constraints (already included, but explicit for clarity)
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+}

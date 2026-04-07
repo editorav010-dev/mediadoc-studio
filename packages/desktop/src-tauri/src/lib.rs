@@ -221,13 +221,20 @@ async fn install_ytdlp(window: tauri::Window) -> Result<TaskResult, String> {
 async fn open_url(url: String) -> Result<(), String> {
     if url.is_empty() { return Err("Path is empty".to_string()); }
     
-    // Check if it's a local path and if it exists
-    if !url.starts_with("http") && !std::path::Path::new(&url).exists() {
-        return Err("The file or location no longer exists.".to_string());
+    // Normalize path for Windows: Replace // or \\ with single \
+    // However, if it starts with http, don't touch it.
+    let mut normalized = url.clone();
+    if !url.starts_with("http") {
+        normalized = url.replace("/", "\\").replace("\\\\", "\\");
+        
+        // Re-check existence with normalized path
+        if !std::path::Path::new(&normalized).exists() {
+            return Err(format!("The file or location no longer exists: {}", normalized));
+        }
     }
 
     let _ = std::process::Command::new("cmd")
-        .args(["/c", "start", "", &url])
+        .args(["/c", "start", "", &normalized])
         .hide_window()
         .spawn();
     Ok(())
@@ -237,13 +244,16 @@ async fn open_url(url: String) -> Result<(), String> {
 async fn open_in_folder(path: String) -> Result<(), String> {
     if path.is_empty() { return Err("Path is empty".to_string()); }
     
-    if !std::path::Path::new(&path).exists() {
-        return Err("The file or folder no longer exists.".to_string());
+    // Normalize path
+    let normalized = path.replace("/", "\\").replace("\\\\", "\\");
+    
+    if !std::path::Path::new(&normalized).exists() {
+        return Err(format!("The file or folder no longer exists: {}", normalized));
     }
     
     // explorer /select,path highlights the file in its folder
     let _ = std::process::Command::new("explorer")
-        .arg(format!("/select,{}", path))
+        .arg(format!("/select,{}", normalized))
         .hide_window()
         .spawn();
     Ok(())
@@ -848,9 +858,26 @@ async fn download_media(url: String, output_dir: String, cookies_path: Option<St
 }
 
 #[tauri::command]
-async fn images_to_pdf(image_paths: Vec<String>, output_path: String) -> TaskResult {
+async fn images_to_pdf(image_paths: Vec<String>, output_path: String, layout: String) -> TaskResult {
     let paths_str = image_paths.iter().map(|p| format!("r'{}'", p.replace("\\", "\\\\"))).collect::<Vec<_>>().join(",");
-    let script = format!("from PIL import Image; imgs=[Image.open(p).convert('RGB') for p in [{}]]; imgs[0].save(r'{}',save_all=True,append_images=imgs[1:])", paths_str, output_path.replace("\\", "\\\\"));
+    let script = format!(
+        "from PIL import Image\n\
+         imgs=[]\n\
+         for p in [{}]:\n\
+         {}img = Image.open(p).convert('RGB')\n\
+         {}if '{}' == 'A4':\n\
+         {}a4_w, a4_h = 2480, 3508\n\
+         {}img.thumbnail((a4_w, a4_h), Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)\n\
+         {}new_img = Image.new('RGB', (a4_w, a4_h), (255, 255, 255))\n\
+         {}new_img.paste(img, ((a4_w - img.width) // 2, (a4_h - img.height) // 2))\n\
+         {}imgs.append(new_img)\n\
+         {}else:\n\
+         {}imgs.append(img)\n\
+         if imgs: imgs[0].save(r'{}', save_all=True, append_images=imgs[1:])", 
+        paths_str, 
+        "    ", "    ", layout, "        ", "        ", "        ", "        ", "        ", "    ", "        ",
+        output_path.replace("\\", "\\\\")
+    );
     
     let result = tokio::task::spawn_blocking(move || {
         Command::new("python")
@@ -1259,7 +1286,23 @@ async fn apply_watermark(
 #[tauri::command]
 async fn check_python_deps() -> Result<TaskResult, String> {
     let result = tokio::task::spawn_blocking(move || {
-        // Run pip install for required libraries
+        // Fast Check: Try to import all libraries first
+        let check_output = std::process::Command::new("python")
+            .args(["-c", "import pytesseract; import fitz; import PIL; import pypdf"])
+            .hide_window()
+            .output();
+            
+        if let Ok(o) = check_output {
+            if o.status.success() {
+                return Ok(TaskResult {
+                    success: true,
+                    output_path: "All Python dependencies verified (Cached)".to_string(),
+                    error_message: String::new(),
+                });
+            }
+        }
+
+        // Slow Path: Run pip install if any imports failed
         let output = std::process::Command::new("python")
             .args([
                 "-m", "pip", "install", 
@@ -1272,7 +1315,7 @@ async fn check_python_deps() -> Result<TaskResult, String> {
             Ok(o) if o.status.success() => {
                 Ok(TaskResult {
                     success: true,
-                    output_path: "Python dependencies verified".to_string(),
+                    output_path: "Python dependencies updated successfully".to_string(),
                     error_message: String::new(),
                 })
             }
@@ -1283,7 +1326,7 @@ async fn check_python_deps() -> Result<TaskResult, String> {
                     error_message: format!("Failed to install Python deps: {}", String::from_utf8_lossy(&o.stderr)),
                 })
             }
-            Err(e) => Err(format!("Python not found in system PATH. Please install Python first: {}", e)),
+            Err(e) => Err(format!("Python runtime error or missing from PATH: {}", e)),
         }
     }).await.map_err(|e| e.to_string())?;
 
