@@ -18,6 +18,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
+import kotlin.math.max
 
 /**
  * Native document converter using Apache POI for Office formats.
@@ -175,7 +176,7 @@ class DocumentConverter {
             isAntiAlias = true
             typeface = Typeface.DEFAULT_BOLD
         }
-        canvas.drawText("Sheet: ${sheet.sheetName}", MARGIN.toFloat(), yPosition, titlePaint)
+        canvas.drawText("Sheet: ${sheet.sheetName}", MARGIN.toFloat(), yPosition.toFloat(), titlePaint)
         yPosition += 25
 
         // Draw column headers and data
@@ -279,22 +280,20 @@ class DocumentConverter {
         // Extract text from slide shapes
         for (shape in slide.shapes) {
             if (shape is org.apache.poi.xslf.usermodel.XSLFTextShape) {
-                for (paragraph in shape.textParagraphs) {
-                    val text = paragraph.text?.trim()
-                    if (!text.isNullOrEmpty()) {
-                        val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, A4_WIDTH - 2 * MARGIN)
-                            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                            .setLineSpacing(4f, 1f)
-                            .setIncludePad(false)
-                            .build()
-                        
-                        canvas.save()
-                        canvas.translate(MARGIN.toFloat(), yPosition.toFloat())
-                        layout.draw(canvas)
-                        canvas.restore()
-                        
-                        yPosition += layout.height + 10
-                    }
+                val text = shape.text?.trim()
+                if (!text.isNullOrEmpty()) {
+                    val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, A4_WIDTH - 2 * MARGIN)
+                        .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                        .setLineSpacing(4f, 1f)
+                        .setIncludePad(false)
+                        .build()
+                    
+                    canvas.save()
+                    canvas.translate(MARGIN.toFloat(), yPosition.toFloat())
+                    layout.draw(canvas)
+                    canvas.restore()
+                    
+                    yPosition += layout.height + 10
                 }
             }
         }
@@ -318,22 +317,20 @@ class DocumentConverter {
         // Extract text from slide shapes
         for (shape in slide.shapes) {
             if (shape is org.apache.poi.hslf.usermodel.HSLFTextShape) {
-                for (paragraph in shape.textParagraphs) {
-                    val text = paragraph.text?.trim()
-                    if (!text.isNullOrEmpty()) {
-                        val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, A4_WIDTH - 2 * MARGIN)
-                            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                            .setLineSpacing(4f, 1f)
-                            .setIncludePad(false)
-                            .build()
-                        
-                        canvas.save()
-                        canvas.translate(MARGIN.toFloat(), yPosition.toFloat())
-                        layout.draw(canvas)
-                        canvas.restore()
-                        
-                        yPosition += layout.height + 10
-                    }
+                val text = shape.text?.trim()
+                if (!text.isNullOrEmpty()) {
+                    val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, A4_WIDTH - 2 * MARGIN)
+                        .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                        .setLineSpacing(4f, 1f)
+                        .setIncludePad(false)
+                        .build()
+                    
+                    canvas.save()
+                    canvas.translate(MARGIN.toFloat(), yPosition.toFloat())
+                    layout.draw(canvas)
+                    canvas.restore()
+                    
+                    yPosition += layout.height + 10
                 }
             }
         }
