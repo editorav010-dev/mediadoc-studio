@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.formatica.formatica_mobile"
-    compileSdk = 34  // Changed from 36 to 34 for better compatibility
+    compileSdk = 36  // Required by androidx.browser:1.9.0 and androidx.core:1.17.0
     ndkVersion = flutter.ndkVersion
 
     packaging {
