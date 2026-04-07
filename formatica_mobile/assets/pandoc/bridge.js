@@ -1,5 +1,5 @@
 const pendingInputs = new Map();
-const outputChunkSize = 160000;
+const outputChunkSize = 500000;  // 500KB chunks (increased from 160KB for better performance)
 let pandocModulePromise = null;
 
 function postMessage(type, payload = {}) {
@@ -11,8 +11,15 @@ function postMessage(type, payload = {}) {
   }
 }
 
-// Intercept console messages and send to Flutter
+// Intercept console messages and send to Flutter (DISABLED in production for performance)
 (function() {
+    // Only enable console interception in debug mode for performance
+    const ENABLE_CONSOLE_BRIDGE = false; // Set to true for debugging only
+    
+    if (!ENABLE_CONSOLE_BRIDGE) {
+        return; // Skip console interception in production
+    }
+    
     const originalLog = console.log;
     const originalWarn = console.warn;
     const originalError = console.error;
@@ -238,8 +245,20 @@ window.formaticaFinalizeRequest = async function formaticaFinalizeRequest(payloa
     });
 
     const { convert } = await loadPandocModule();
+    
+    console.log(`[Bridge] Starting conversion: ${request.inputFileName} -> ${request.outputFileName}`);
+    console.log(`[Bridge] Options:`, options);
+    
+    const startTime = Date.now();
     const result = await convert(options, null, files);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+    
+    console.log(`[Bridge] Conversion completed in ${elapsed}s`);
+    console.log(`[Bridge] Stderr:`, result.stderr);
+    console.log(`[Bridge] Warnings:`, result.warnings);
+    
     if (result.stderr && /\bERROR\b/i.test(result.stderr)) {
+      console.error(`[Bridge] Conversion ERROR detected in stderr`);
       throw new Error(result.stderr.trim());
     }
 

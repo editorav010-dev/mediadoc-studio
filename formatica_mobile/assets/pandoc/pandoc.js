@@ -38,7 +38,7 @@ import {
 } from "./wasi/index.js";
 console.log('[PandocJS] WASI imports loaded successfully');
 
-const args = ["pandoc.wasm", "+RTS", "-H32m", "-RTS"];
+const args = ["pandoc.wasm", "+RTS", "-H128m", "-M256m", "-RTS"];
 const env = [];
 const in_file = new File(new Uint8Array(), { readonly: true });
 const out_file = new File(new Uint8Array(), { readonly: false });

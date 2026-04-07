@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class PandocBridgeController extends ChangeNotifier {
-  static const int _inputChunkSize = 180000;
+  static const int _inputChunkSize = 500000;  // 500KB chunks (increased from 180KB for better performance)
 
   final Completer<void> _readyCompleter = Completer<void>();
   final Map<String, _PendingPandocRequest> _pendingRequests = {};
@@ -91,10 +91,17 @@ class PandocBridgeController extends ChangeNotifier {
 
     try {
       onProgress?.call(0.12, 'Preparing document...');
+      
+      // Log file size for debugging
+      final fileSizeMB = inputBytes.length / (1024 * 1024);
+      debugPrint('PandocBridge: Converting ${inputFileName} (${fileSizeMB.toStringAsFixed(2)} MB)');
+      
       final base64Input = base64Encode(inputBytes);
       final chunkCount = base64Input.isEmpty
           ? 0
           : ((base64Input.length + _inputChunkSize - 1) ~/ _inputChunkSize);
+
+      debugPrint('PandocBridge: Splitting into $chunkCount chunks');
 
       await controller.runJavaScript(
         'window.formaticaResetInput(${jsonEncode(requestId)});',
@@ -122,20 +129,25 @@ class PandocBridgeController extends ChangeNotifier {
         'extraOptions': extraOptions,
       };
 
+      debugPrint('PandocBridge: Starting conversion');
+      onProgress?.call(0.35, 'Converting document...');
+
       await controller.runJavaScript(
         'window.formaticaFinalizeRequest(${jsonEncode(payload)});',
       );
 
+      // Increased timeout to 6 minutes for larger documents
       return await pending.completer.future.timeout(
-        const Duration(minutes: 4),
+        const Duration(minutes: 6),
         onTimeout: () {
           _pendingRequests.remove(requestId);
           throw Exception(
-            'Document conversion timed out on-device. Try a smaller file.',
+            'Document conversion timed out (6 min limit). The file may be too large or complex. Try a smaller document.',
           );
         },
       );
     } catch (error) {
+      debugPrint('PandocBridge: Conversion error: $error');
       _pendingRequests.remove(requestId);
       rethrow;
     }
