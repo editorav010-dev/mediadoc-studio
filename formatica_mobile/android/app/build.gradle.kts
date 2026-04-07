@@ -19,7 +19,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -31,7 +30,9 @@ android {
         applicationId = "com.formatica.formatica_mobile"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = 24
+        // IMPORTANT: minSdk 26 required by Apache POI 5.2.3+ (uses MethodHandle.invoke)
+        // API 26 = Android 8.0 Oreo (covers 97.2% of devices as of 2024)
+        minSdk = 26
         targetSdk = 34
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -58,11 +59,8 @@ flutter {
 }
 
 dependencies {
-    // Core library desugaring for Java 8+ API support on API 24+
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
-    
     // Apache POI for Microsoft Office format parsing
-    // Version 5.2.3 requires desugaring for MethodHandle support on API 24-25
+    // Requires minSdk 26+ due to MethodHandle.invoke usage
     implementation("org.apache.poi:poi:5.2.3")              // HSSF (XLS) and common POI classes
     implementation("org.apache.poi:poi-ooxml:5.2.3")        // XSSF (XLSX) and OOXML support
     implementation("org.apache.poi:poi-scratchpad:5.2.3")   // HSLF (PPT) and legacy format support
