@@ -19,6 +19,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -57,9 +58,11 @@ flutter {
 }
 
 dependencies {
+    // Core library desugaring for Java 8+ API support on API 24+
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    
     // Apache POI for Microsoft Office format parsing
-    // Version 5.2.3 is the last version supporting Android API 24+
-    // Version 5.2.4+ requires API 26+ due to MethodHandle usage
+    // Version 5.2.3 requires desugaring for MethodHandle support on API 24-25
     implementation("org.apache.poi:poi:5.2.3")              // HSSF (XLS) and common POI classes
     implementation("org.apache.poi:poi-ooxml:5.2.3")        // XSSF (XLSX) and OOXML support
     implementation("org.apache.poi:poi-scratchpad:5.2.3")   // HSLF (PPT) and legacy format support
